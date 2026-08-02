@@ -201,32 +201,41 @@ forbidden — the app should open the store picker.
 
 ### Order statuses
 
-The current process template (v3):
+The current process template (v4). **The flow branches on `orderType`** — invoicing
+happens immediately after production and applies to customer orders only:
 
 ```
-NEW → IN_PRODUCTION ─┬─[all items complete]→ KEEP_IN_FACTORY ─┬→ SENT_TO_WAREHOUSE
-                     └─[all items complete]→ SENT_TO_WAREHOUSE│
-                                                              │
-        KEEP_IN_FACTORY ──[destination store set]→ IN_TRANSIT ←┘
-        SENT_TO_WAREHOUSE ─[destination store set]→ IN_TRANSIT
-
-IN_TRANSIT → SENT_TO_STORE → RECEIVED_IN_STORE ─┬→ READY_TO_INVOICE → READY_TO_DELIVER ─┐
-                                                └────────────────────→ OUT_FOR_DELIVERY ←┘
-                                                                              ↓
-                                                                          DELIVERED
+                        ┌── customer ──→ READY_TO_INVOICE → READY_TO_DELIVER ──┐
+NEW → IN_PRODUCTION ────┤   [all items complete]                               │
+                        └── stock ─────────────────────────────────────────────┤
+                            [all items complete]                               │
+                                                                               ↓
+                                            ┌──────────────────────────────────┴──┐
+                                            ↓                                     ↓
+                                     KEEP_IN_FACTORY ──────────→ SENT_TO_WAREHOUSE
+                                            └──[destination store set]──┬─────────┘
+                                                                        ↓
+                          IN_TRANSIT → SENT_TO_STORE → RECEIVED_IN_STORE
+                                                              ↓
+                                              OUT_FOR_DELIVERY → DELIVERED
 ```
+
+**A stock order can never reach `READY_TO_INVOICE` or `READY_TO_DELIVER`**, and a
+customer order cannot skip them. Attempting either returns `409 ILLEGAL_TRANSITION`
+with a message naming the order type. Everything from `KEEP_IN_FACTORY` onward is
+shared by both types.
 
 | Status | Meaning |
 |---|---|
 | `NEW` | Captured, not yet in production |
 | `IN_PRODUCTION` | Being made |
+| `READY_TO_INVOICE` | **Customer orders only** — awaiting invoicing (manual, outside the app) |
+| `READY_TO_DELIVER` | **Customer orders only** — invoiced, cleared to dispatch |
 | `KEEP_IN_FACTORY` | Complete, held at the factory |
 | `SENT_TO_WAREHOUSE` | Moved to the warehouse |
 | `IN_TRANSIT` | Moving to the destination store |
 | `SENT_TO_STORE` | Despatched to the store |
 | `RECEIVED_IN_STORE` | Confirmed arrived at the store |
-| `READY_TO_INVOICE` | Awaiting invoicing (manual, outside the app) |
-| `READY_TO_DELIVER` | Invoiced, ready to go out |
 | `OUT_FOR_DELIVERY` | Out for delivery to the customer |
 | `DELIVERED` | Complete — the only dead end |
 
@@ -237,14 +246,10 @@ Reverts permitted: `KEEP_IN_FACTORY`/`SENT_TO_WAREHOUSE → IN_PRODUCTION` (rewo
 `IN_TRANSIT → SENT_TO_WAREHOUSE` (shipment recalled), `SENT_TO_STORE → IN_TRANSIT`
 (wrong store), `RECEIVED_IN_STORE → SENT_TO_STORE` (marked received in error),
 `OUT_FOR_DELIVERY → RECEIVED_IN_STORE` (failed delivery). Any other backward move
-returns `409`.
+returns `409`. Reverts apply to both order types.
 
-> **Open:** `READY_TO_INVOICE`/`READY_TO_DELIVER` are accountant-driven and, per the
-> wireframes, independent of physical location — but an order has a single status
-> field, so they are currently modelled as an optional route between
-> `RECEIVED_IN_STORE` and `OUT_FOR_DELIVERY`. An order therefore cannot be (say)
-> `IN_TRANSIT` and `READY_TO_INVOICE` at once. If that is needed, it requires a
-> separate invoice status field rather than a template change — flagged, not assumed.
+Note that reverting a **customer** order to `IN_PRODUCTION` means it re-traverses
+invoicing on the way back out — reworked goods are re-invoiced.
 
 ### POST /api/order-line-items/{lineItemId}/transition
 Same shape as above, scoped to a single line item, validated against

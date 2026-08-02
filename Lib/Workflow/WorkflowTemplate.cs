@@ -54,6 +54,15 @@ public sealed record TransitionRule
     /// actually populated before the goods move, which is what this enforces.
     /// </summary>
     public bool RequiresDestinationStore { get; init; }
+
+    /// <summary>
+    /// Order types (customer/stock) this edge applies to. Null or empty means it
+    /// applies to both. Used to branch the process: invoicing applies only to
+    /// customer orders, so stock orders route around it entirely.
+    ///
+    /// The order-level counterpart of <see cref="Methods"/>.
+    /// </summary>
+    public IReadOnlyList<string>? OrderTypes { get; init; }
 }
 
 public sealed record WorkflowTemplate

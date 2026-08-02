@@ -16,6 +16,12 @@ public enum TransitionOutcome
     /// <summary>An edge exists but excludes the item's method.</summary>
     MethodNotPermitted,
 
+    /// <summary>
+    /// An edge exists but does not apply to this order's type — e.g. a stock order
+    /// attempting an invoicing transition, which only customer orders take.
+    /// </summary>
+    OrderTypeNotPermitted,
+
     /// <summary>An edge exists and applies, but the caller holds none of its allowed roles.</summary>
     RoleNotPermitted,
 
@@ -62,12 +68,17 @@ public sealed class TransitionValidator
     /// The line item's chosen method, or null for order-level transitions. An edge
     /// that restricts methods can never be satisfied by a null method.
     /// </param>
+    /// <param name="orderType">
+    /// The order's type (customer/stock), or null for line-item transitions. An edge
+    /// that restricts order types can never be satisfied by a null order type.
+    /// </param>
     public TransitionDecision Validate(
         WorkflowTemplate template,
         string currentStatus,
         string targetStatus,
         IReadOnlyCollection<string> callerRoles,
-        string? method = null)
+        string? method = null,
+        string? orderType = null)
     {
         var known = template.Statuses.Select(s => s.Code).ToHashSet(Comparer);
 
@@ -104,7 +115,15 @@ public sealed class TransitionValidator
                 $"'{currentStatus}' cannot transition to '{targetStatus}' for method '{method ?? "(none)"}'");
         }
 
-        var permitted = applicable.FirstOrDefault(e => RolesPermit(e, callerRoles));
+        var forThisOrderType = applicable.Where(e => AppliesToOrderType(e, orderType)).ToList();
+        if (forThisOrderType.Count == 0)
+        {
+            return new TransitionDecision(
+                TransitionOutcome.OrderTypeNotPermitted,
+                $"'{currentStatus}' cannot transition to '{targetStatus}' for a {orderType ?? "(none)"} order");
+        }
+
+        var permitted = forThisOrderType.FirstOrDefault(e => RolesPermit(e, callerRoles));
         if (permitted is null)
         {
             return new TransitionDecision(
@@ -124,6 +143,17 @@ public sealed class TransitionValidator
         }
 
         return method is not null && rule.Methods.Contains(method, Comparer);
+    }
+
+    private static bool AppliesToOrderType(TransitionRule rule, string? orderType)
+    {
+        // No restriction listed — the edge applies to both order types.
+        if (rule.OrderTypes is null || rule.OrderTypes.Count == 0)
+        {
+            return true;
+        }
+
+        return orderType is not null && rule.OrderTypes.Contains(orderType, Comparer);
     }
 
     private static bool RolesPermit(TransitionRule rule, IReadOnlyCollection<string> callerRoles)

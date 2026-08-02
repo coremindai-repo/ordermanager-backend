@@ -21,7 +21,7 @@ public class OrderTransition(
 {
     public record TransitionRequest(string TargetStatus, string? Notes, string[]? PhotoUrls);
 
-    private record OrderRow(Guid Id, string CurrentStatus, Guid? StoreId);
+    private record OrderRow(Guid Id, string CurrentStatus, Guid? StoreId, string OrderType);
 
     [Function("OrderTransition")]
     public async Task<IActionResult> Run(
@@ -45,7 +45,8 @@ public class OrderTransition(
         await connection.OpenAsync();
 
         var order = await connection.QuerySingleOrDefaultAsync<OrderRow>(
-            "SELECT id AS Id, current_status AS CurrentStatus, store_id AS StoreId FROM orders WHERE id = @Id",
+            @"SELECT id AS Id, current_status AS CurrentStatus, store_id AS StoreId, order_type AS OrderType
+              FROM orders WHERE id = @Id",
             new { Id = id });
 
         if (order is null)
@@ -55,7 +56,10 @@ public class OrderTransition(
 
         var template = await templateProvider.GetActiveAsync(TemplateKind.Process);
 
-        var decision = validator.Validate(template, order.CurrentStatus, body.TargetStatus, caller.Roles);
+        // orderType drives the customer/stock branch: invoicing applies to customer
+        // orders only, so stock orders route straight into the logistics chain.
+        var decision = validator.Validate(
+            template, order.CurrentStatus, body.TargetStatus, caller.Roles, orderType: order.OrderType);
         if (!decision.IsAllowed)
         {
             throw TransitionOutcomeMapper.ToException(decision);

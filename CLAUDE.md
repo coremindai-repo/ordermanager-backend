@@ -175,7 +175,11 @@ Template shape (`template_json`): every legal move is an explicit
 exists; a backward move requires an edge marked `"revert": true`. Optional
 `allowedRoles` restricts who may perform a transition — **omitted or empty
 means any authenticated role**, not "deny all". Optional `methods`
-restricts an edge to specific line-item methods; omitted means all methods.
+restricts an edge to specific line-item methods; omitted means all methods. Optional
+`orderTypes` is its order-level counterpart — it restricts an edge to `customer` or
+`stock` orders, and is what branches the process so that invoicing (which happens
+immediately after production) applies to customer orders only; stock orders route
+straight into the logistics chain. Omitted means the edge applies to both.
 
 Two order-level gates are also config, not code — which transitions carry them is a
 template decision, so a client with a different process needs no code change:

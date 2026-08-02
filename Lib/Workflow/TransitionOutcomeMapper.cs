@@ -18,9 +18,13 @@ public static class TransitionOutcomeMapper
         TransitionOutcome.RoleNotPermitted =>
             new AppException(StatusCodes.Status403Forbidden, "FORBIDDEN", decision.Message),
 
+        // OrderTypeNotPermitted is a plain illegal transition, not an actionable one:
+        // unlike a missing store, there is nothing the user can do — a stock order is
+        // never going to be invoiced.
         TransitionOutcome.UnknownCurrentStatus or
         TransitionOutcome.TransitionNotAllowed or
-        TransitionOutcome.MethodNotPermitted =>
+        TransitionOutcome.MethodNotPermitted or
+        TransitionOutcome.OrderTypeNotPermitted =>
             new AppException(StatusCodes.Status409Conflict, "ILLEGAL_TRANSITION", decision.Message),
 
         // Distinct code: the move is legal in principle, the order just isn't ready —

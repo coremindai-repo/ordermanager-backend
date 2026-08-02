@@ -30,6 +30,24 @@ outsourcing/import).
   pilot for a small internal user group — do not add infrastructure
   (message queues, orchestration engines, gateways) the current scope
   doesn't need. Specific decisions below are deliberate, not oversights.
+- **Any log line that must be visible outside Azure Monitor — startup
+  diagnostics, silent-failure warnings — must write to stdout, not just
+  `ILogger`.** `host.json` sets `telemetryMode: OpenTelemetry`, under which
+  worker `ILogger` output is routed to Azure Monitor and does **not** appear
+  in the local `func start` console or the Azure log stream. Logs emitted
+  before the worker connects to the host (anything in `Program.cs` ahead of
+  `app.Run()`) are dropped entirely, since there is no channel yet.
+
+  Routine per-request logging through `ILogger` is fine and correct — App
+  Insights is where it belongs. This rule is for the small number of lines
+  whose whole purpose is to be noticed: "this deployment is running a stub",
+  "this notification reached nobody". Use `Console.WriteLine` **in addition
+  to** `ILogger`, so the line lands in both places.
+
+  Existing examples: the SOHO stub banner in `Program.cs`, and the
+  zero-recipient warning in `NotificationService`. This has now been
+  rediscovered twice (Epics 3 and 5) — if a warning you added seems not to
+  fire, check this before assuming the code path is wrong.
 
 ## 3. Architecture decisions (pilot scope)
 

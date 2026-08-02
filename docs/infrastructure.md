@@ -216,18 +216,7 @@ and needs no seeding. See CLAUDE.md §8a; do not "fix" this by adding one.
 - [ ] Replace the `AllowLocalDev` SQL firewall rule with something durable, or remove it.
       It is pinned to one developer's IP at one moment in time.
 
-### 4. Confirm the two inferred role assignments
-
-Role gating is enforced (CLAUDE.md §5), but two transitions were not in the client's
-supplied mapping and were inferred as `factory_supervisor`:
-
-- [ ] `READY_TO_DELIVER → KEEP_IN_FACTORY` / `SENT_TO_WAREHOUSE`
-- [ ] `KEEP_IN_FACTORY → SENT_TO_WAREHOUSE`
-
-Both are factory-end goods movements. Confirm with the client, and correct
-`sql/017_process_template_v6.sql` if invoicing clearance should be a store_manager act.
-
-### 5. Push notifications
+### 4. Push notifications
 
 - [ ] Confirm Firebase/Apple credentials are configured in the **mobile repo via EAS**
       (`eas credentials`). Nothing is needed in this repo — Expo brokers delivery — but
@@ -236,7 +225,7 @@ Both are factory-end goods movements. Confirm with the client, and correct
       data: an event with no active rows notifies nobody while everything else reports
       success.
 
-### 6. Operational
+### 5. Operational
 
 - [ ] Consider a staging environment. `main` currently deploys straight to the single
       production Function App.

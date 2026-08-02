@@ -11,15 +11,21 @@
 --   Store-side movements                        store_manager, company_manager
 --   Reverts                                     same as the forward move they undo
 --
--- TWO TRANSITIONS WERE NOT IN THE SUPPLIED MAPPING and are inferred — flagged so they
--- can be corrected without archaeology:
+-- Two transitions were absent from the supplied mapping and were inferred as
+-- factory_supervisor when this version was written. Both have since been CONFIRMED
+-- correct by the client:
 --
---   READY_TO_DELIVER -> KEEP_IN_FACTORY / SENT_TO_WAREHOUSE  (customer orders entering
---     logistics after invoicing) and KEEP_IN_FACTORY -> SENT_TO_WAREHOUSE.
+--   KEEP_IN_FACTORY -> SENT_TO_WAREHOUSE
+--     A factory-floor movement.
 --
---   Both are physical goods movements at the factory end, so they follow the same rule
---   as the other factory-side movements: factory_supervisor. If invoicing clearance is
---   meant to be a store_manager act, change these two.
+--   READY_TO_DELIVER -> KEEP_IN_FACTORY / SENT_TO_WAREHOUSE
+--     The physical dispatch decision once invoicing clears — NOT a revert of the
+--     invoicing step. The factory supervisor owns that call, consistent with the other
+--     dispatch transitions.
+--
+-- Recorded because the reasoning is not obvious from the edges alone: these two sit
+-- immediately after store-side actions, so factory_supervisor looks anomalous until you
+-- see that both are goods movements at the factory end.
 --
 -- MIGRATION: no statuses added or removed, so nothing can be stranded. But note this
 -- version can strand *people*: a user whose role does not appear on any transition can

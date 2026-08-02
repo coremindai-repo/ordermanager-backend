@@ -212,12 +212,14 @@ reported success. Change those edges and the endpoint guard together, never sepa
 are restricted. Contract §3 says a factory_supervisor raises them — they just do not
 progress them through supplier contact.
 
-Two transitions were not in the client's supplied mapping and are **inferred**:
-`READY_TO_DELIVER → KEEP_IN_FACTORY`/`SENT_TO_WAREHOUSE`, and
-`KEEP_IN_FACTORY → SENT_TO_WAREHOUSE`. Both are factory-end goods movements so they
-follow the other factory-side rules (factory_supervisor). Flagged in
-`sql/017_process_template_v6.sql` — correct there if invoicing clearance is meant to be
-a store_manager act.
+**Why `factory_supervisor` owns two transitions that look store-side.**
+`KEEP_IN_FACTORY → SENT_TO_WAREHOUSE` is a factory-floor movement.
+`READY_TO_DELIVER → KEEP_IN_FACTORY`/`SENT_TO_WAREHOUSE` is the physical dispatch
+decision once invoicing clears — not a revert of the invoicing step — and the factory
+supervisor owns that call, consistent with the other dispatch transitions. Both were
+confirmed with the client. Worth stating because they follow store-side actions in the
+chain, so the assignment reads as a mistake until you see they are goods movements at
+the factory end.
 
 ### Removing a status from a template requires migrating orders in the same script
 

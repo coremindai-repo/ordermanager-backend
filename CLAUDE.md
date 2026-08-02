@@ -42,7 +42,11 @@ outsourcing/import).
 | Real-time updates | None — REST GET only, client-initiated refresh | Explicit pilot constraint: no WebSocket/SignalR |
 | Auth | Custom Users table + JWT (HS256, 12h expiry) | No IAM in pilot; small trusted user group |
 | API exposure | Direct HTTPS calls to Functions, no API Management | Deferred until IAM/APIM integration phase |
-| Language/runtime | Node.js + TypeScript on Azure Functions v4 | Confirm/override if the team has a different preference — flagging as an assumption |
+| Language/runtime | **.NET 10, isolated worker model, C#, on Azure Functions runtime 4.x** | Team standard is .NET/C#; .NET 10 is the current LTS (GA on Azure Functions, isolated worker only) with support through Nov 2028, vs. .NET 8 reaching end-of-support Nov 2026 |
+| Hosting plan | **Flex Consumption** | .NET 10 is not supported on the Linux Consumption plan — Flex Consumption (or a Windows-based plan) is required |
+| Data access | EF Core or Dapper against Azure SQL (confirm team preference) | Either is fine for this scope; pick one and stay consistent across epics |
+| Password hashing | BCrypt.Net | .NET-native equivalent of bcrypt |
+| JWT | `System.IdentityModel.Tokens.Jwt` / `Microsoft.AspNetCore.Authentication.JwtBearer` | Standard .NET JWT issuance/validation |
 
 If pilot volume or client count grows and any of these becomes a real
 bottleneck (e.g., procurement genuinely needs supplier API automation),

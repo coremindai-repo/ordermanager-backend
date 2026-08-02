@@ -1,0 +1,6 @@
+{
+  "env": {
+    "AZURE_TENANT_ID": "bee4b7aa-ef0b-47a3-8b1b-986b63440ad1",
+    "AZURE_SUBSCRIPTION_ID": "761807b1-4e09-4429-ae58-4419e856128b"
+  }
+}

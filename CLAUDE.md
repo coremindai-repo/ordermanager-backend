@@ -225,6 +225,43 @@ synchronously, log the attempt to `notifications_log` regardless of
 delivery success (delivery failure is not fatal — the user's refresh
 button is the fallback). No email/SMS provider needed anywhere in this repo.
 
+## 6a. What is templatized, and what is not
+
+Contract §6 calls raw materials and outsourcing/import "fixed sub-processes — not
+templatized". That holds for the **request entities**, whose chains live in code:
+
+- `RawMaterialStatusFlow` — requested → sent_to_supplier → order_placed →
+  order_accepted → received
+- `OutsourcingStatusFlow` — placed → accepted → received_finished |
+  received_semi_finished
+
+Neither is in a template, and both are guarded by their own unit tests, since no
+template protects them.
+
+**Line item statuses are a different matter and must stay templatized**, even for
+outsourced and imported items. Not for flexibility's sake — by necessity:
+
+1. Line-item transitions validate against `production_step_templates`. A status that
+   isn't there fails every transition with `UnknownCurrentStatus`.
+2. `LineItemCompletion` derives its terminal set from that template to gate the order
+   leaving production. A "done" state outside the template means gate A can never pass.
+3. The `methods` restriction on transitions exists precisely for this branch.
+
+So the outsource path lives in production step template v2:
+`PENDING → WITH_SUPPLIER → FINISHED` (received finished), or
+`PENDING → WITH_SUPPLIER → SEMI_FINISHED → {factory steps} → FINISHED`.
+
+The semi-finished route rejoins the **same** factory step edges rather than
+duplicating them — the onward edges carry no `methods` restriction, so once an item
+reaches a factory step it is indistinguishable from one that started there. Do not add
+a parallel outsourcing step mechanism; the wireframes are explicit that these items are
+"shown the production steps as in the factory production flow".
+
+Receiving a request advances its line items automatically, through the same validator
+and writing the same history rows as a manual transition — so no template rule is
+bypassed, and an item the move would be illegal for is skipped and logged rather than
+forced.
+
 ## 7a. Photo storage (production step attachments)
 
 Photos are uploaded **by the device directly to Azure Blob storage**, never through

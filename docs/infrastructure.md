@@ -164,6 +164,12 @@ safe during the pilot build but **not** safe with real client data.
       -- then delete these and their dependent rows (materials, history,
       -- billing_shipping_details, order_line_items) before deleting the orders
       ```
+- [ ] **Populate the `suppliers` table.** It is deliberately created empty
+      (`sql/013_outsourcing.sql`) — the client's real supplier list has not been
+      shared, and seeding invented names would put fake business relationships into
+      the database looking exactly like real ones. Until it has rows, the
+      outsourcing/import picker is empty and requests can only be raised without a
+      supplier.
 - [ ] Remove or rotate the `devadmin` seed account (`sql/003_seed_test_user.sql`) — its
       password is committed to this repo in plain text.
 - [ ] Replace the `AllowLocalDev` SQL firewall rule with something durable, or remove it.

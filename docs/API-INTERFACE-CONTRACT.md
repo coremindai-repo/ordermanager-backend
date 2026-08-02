@@ -399,11 +399,80 @@ Response `200`:
 }
 ```
 
-### GET /api/outsourcing-requests
-### POST /api/outsourcing-requests
-### POST /api/outsourcing-requests/{id}/status
 Same manual-step pattern; statuses: `placed → accepted → received_semi_finished
 | received_finished`.
+
+The chain **branches at the end**, and the branch decides what happens to the line
+items: finished goods are done, semi-finished goods still need factory work. Both
+receipt states are terminal — neither converts into the other, and a semi-finished
+item finishes by going through the factory steps, not by re-reporting the receipt.
+Skipping acceptance, going backwards and restating the current status all return
+`409`. Responses carry `nextStatuses` (an array, since `accepted` has two).
+
+### GET /api/suppliers
+The predefined picker for outsourcing/import. Optional `method` filter
+(`outsource`|`import`) — not every supplier serves both.
+
+```json
+{
+  "suppliers": [
+    { "supplierId": "guid", "name": "string", "contact": "string|null",
+      "supportsOutsource": true, "supportsImport": false }
+  ],
+  "count": 1
+}
+```
+
+### GET /api/outsourcing-requests
+Query params: `status`, `method`.
+
+### POST /api/outsourcing-requests
+```json
+{
+  "method": "outsource | import",
+  "supplierId": "guid|null",
+  "lineItemIds": ["guid"],
+  "items": [ { } ],
+  "notes": "string|null"
+}
+```
+- At least one `lineItemId` is required, and **every named line item must already be
+  set to that method** — an item's route is chosen on its production plan, so a
+  request cannot silently reroute an item planned for the factory (`400` otherwise).
+- `supplierId`, if given, must be active and serve that method (`400` otherwise).
+- Response `201` with `requestId`, `status: "placed"`, `nextStatuses`, and
+  `lineItemsAdvanced` — placing the request is what sends the goods out, so the linked
+  items move to `WITH_SUPPLIER` immediately.
+
+### POST /api/outsourcing-requests/{id}/status
+```json
+{ "status": "accepted", "supplierId": "guid|null", "notes": "string|null" }
+```
+Response `200` adds `lineItemsAdvanced` and `requiresProductionPlan`. On
+`received_semi_finished` the latter is `true` — those items need a production plan
+before they can continue.
+
+### How line items move through outsourcing
+
+The request status drives the linked line items, so the same physical event is not
+recorded twice:
+
+| Request reaches | Line items move to | Then |
+|---|---|---|
+| `placed` | `WITH_SUPPLIER` | Waiting on the supplier |
+| `received_finished` | `FINISHED` | Done — counts toward the order's completeness |
+| `received_semi_finished` | `SEMI_FINISHED` | Needs a production plan, then the normal factory steps |
+
+**Semi-finished items re-enter the same step checklist factory items use** — set a
+production plan via `POST /api/order-line-items/{id}/production-plan` and drive the
+steps exactly as for a factory item. There is no separate outsourcing step mechanism.
+
+`FINISHED` remains the only terminal production status, so an outsourced item counts
+as complete on exactly the same condition as a factory one: the order cannot leave
+production while any item sits at `WITH_SUPPLIER` or `SEMI_FINISHED`.
+
+An outsourced or imported item **cannot skip its supplier stage** — `PENDING` leads
+only to `WITH_SUPPLIER` for those methods, and only to factory steps for `factory`.
 
 ## 7. Order submission sequence (server-side, triggered by POST /api/orders)
 

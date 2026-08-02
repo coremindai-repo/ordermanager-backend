@@ -55,21 +55,67 @@ A longer client name will need a different scheme (e.g. `stphotos{client}`, whic
 leaves 16 characters). Decide that when it first comes up and record it here, rather
 than silently truncating a client's name.
 
-### Function App settings (values not recorded here — see Azure Portal / `az functionapp config appsettings list`)
+## Complete configuration reference
 
-- `SQL_CONNECTION_STRING` — Microsoft.Data.SqlClient connection string to `sqldb-ordermanager`.
-- `JWT_SECRET` — HS256 signing key, 12h token expiry (per API-INTERFACE-CONTRACT.md §2).
-- `APPLICATIONINSIGHTS_CONNECTION_STRING` — points at `appi-ordermanager-nilambur`.
-- `CLIENT_ID` — `c6c944a9-b531-4c21-a3fd-9a8d6df2b180`, the pilot client. Selects which
-  row in `process_templates` / `production_step_templates` the workflow engine loads.
-  Not a secret; it is the tenant key for the multi-client template design.
-- `SOHO_MODE` — currently `stub`. **Must be removed before go-live** — see the SOHO
-  section below.
-- `PHOTO_STORAGE_CONNECTION_STRING` — connection string for `stordermgrphotosnilambur`.
-  Contains the account key, which is what lets the app mint SAS tokens.
-- `PHOTO_CONTAINER_NAME` — `production-photos`.
+Every setting the system needs, and where each one lives. **Values are not recorded
+here** — read them with `az functionapp config appsettings list --name
+func-ordermanager-nilambur -g rg-ordermanager-nilambur`.
 
-Local dev mirrors these in `local.settings.json` (gitignored, never committed).
+Three locations, and they are not interchangeable:
+
+| Location | Used by | Committed? |
+|---|---|---|
+| Function App application settings | the deployed app | no — set in Azure |
+| `local.settings.json` | local `func start` only | **no, gitignored** |
+| GitHub Actions repo secrets | CI deployment only | no — set in GitHub UI |
+
+### Function App settings (deployed) + `local.settings.json` (local dev)
+
+The app reads these identically in both places, so the same name must exist in both for
+local development to work.
+
+| Setting | Purpose | Status |
+|---|---|---|
+| `SQL_CONNECTION_STRING` | Connection to `sqldb-ordermanager`. Contains the `sqladmin` password. | Real |
+| `JWT_SECRET` | HS256 signing key; 12h token lifetime (contract §2). | Real — but generated for the pilot and never rotated. See below. |
+| `CLIENT_ID` | `c6c944a9-b531-4c21-a3fd-9a8d6df2b180`. Selects which `process_templates` / `production_step_templates` row the engine loads. Not a secret — the tenant key for the multi-client design. | Real |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Points at `appi-ordermanager-nilambur`. **Required** — the .NET 10 isolated worker template wires OpenTelemetry at startup and will not start without it. | Real |
+| `PHOTO_STORAGE_CONNECTION_STRING` | `stordermgrphotosnilambur`. Contains the account key, which is what lets the app mint SAS tokens — it cannot be swapped for a connection string without one. | Real |
+| `PHOTO_CONTAINER_NAME` | `production-photos`. | Real |
+| `SOHO_MODE` | `stub` — activates the placeholder SOHO client. | ⚠ **PLACEHOLDER. Must be removed before go-live.** |
+| `AzureWebJobsStorage` | Functions runtime state. Set by provisioning. | Real |
+| `DEPLOYMENT_STORAGE_CONNECTION_STRING` | Flex Consumption deployment packages. Set by provisioning; **deployed app only**, not needed locally. | Real |
+| `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated`. **Local only** — the deployed app carries this in its Flex Consumption runtime config instead of app settings. | Real |
+
+**Nothing needs adding for push notifications.** Expo requires no credentials on this
+side; Firebase/Apple credentials live in the mobile repo via EAS.
+
+**When the real SOHO client is written** it will likely need its own settings (base URL,
+API key or OAuth details). Add them here at that point.
+
+### GitHub Actions repo secrets (CI only)
+
+Set under Settings → Secrets and variables → Actions. None is secret in the
+password sense — OIDC means there is no client secret — but all three are scoped to
+exactly one resource group by the role assignment.
+
+| Secret | Value |
+|---|---|
+| `AZURE_CLIENT_ID` | `b03888c3-6234-4bd6-85a1-d236689ee261` |
+| `AZURE_TENANT_ID` | `bee4b7aa-ef0b-47a3-8b1b-986b63440ad1` |
+| `AZURE_SUBSCRIPTION_ID` | `761807b1-4e09-4429-ae58-4419e856128b` |
+
+### Secrets with no rotation story
+
+Worth knowing before go-live, though none is a checklist blocker on its own:
+
+- **`JWT_SECRET`** — rotating it invalidates every issued token at once, forcing all
+  users to log in again. There is no dual-key grace period. Acceptable for a pilot with
+  12-hour tokens; revisit if that becomes disruptive.
+- **The SQL admin password** exists only inside `SQL_CONNECTION_STRING`. Rotating it means
+  updating the setting and redeploying.
+- **The photo storage account key** likewise lives inside its connection string, and
+  rotating it invalidates any SAS tokens already issued (max ~15 minutes of impact).
 
 ### Push notifications add no Azure resources
 
@@ -210,9 +256,15 @@ and needs no seeding. See CLAUDE.md §8a; do not "fix" this by adding one.
 
 - [ ] **Remove or rotate the `devadmin` account** (`sql/003_seed_test_user.sql`). Its
       password is committed to this repo in plain text, and it holds `company_manager`.
-- [ ] Create real user accounts with appropriate roles. Note that role gating is now
-      enforced on actions, so **a user with no roles can log in but do almost nothing** —
-      assign roles deliberately.
+- [ ] **Create real user accounts.** ⚠ **There are no user-management endpoints** —
+      creating a user means inserting into `users` and `user_roles` directly, with a
+      bcrypt hash (work factor 12) generated out of band. `sql/003_seed_test_user.sql`
+      is the working example. Neither the contract nor any epic scoped user CRUD, so
+      decide how staff get onboarded before go-live rather than during it.
+      - Role gating is enforced on actions, so **a user with no roles can log in but do
+        almost nothing**. Assign roles deliberately.
+      - There is also **no password reset or change endpoint**. A forgotten password
+        currently requires a manual hash update in the database.
 - [ ] Replace the `AllowLocalDev` SQL firewall rule with something durable, or remove it.
       It is pinned to one developer's IP at one moment in time.
 

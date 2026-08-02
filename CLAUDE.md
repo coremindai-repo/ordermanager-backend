@@ -303,9 +303,25 @@ adding a resource and two sets of credentials to buy nothing.
 a bare FCM or APNs token reaching this column means the mobile side is not going through
 Expo's notification API, and pushing it would fail silently at Expo's end.
 
-Expo's send endpoint reports per-token errors (notably `DeviceNotRegistered`) in its
-response rather than as an HTTP failure, so a 200 from Expo does not mean delivered.
-Tokens reported dead should be removed so they stop being retried.
+Expo's send endpoint reports per-token errors in its response rather than as an HTTP
+failure, so **a 200 from Expo does not mean delivered** — the body must be read.
+Verified against the live API: an unregistered token returns HTTP 200 with
+`{"data":[{"status":"error","details":{"error":"DeviceNotRegistered", ...}}]}`.
+
+Error handling splits three ways:
+
+| Expo error | Meaning | Response |
+|---|---|---|
+| `DeviceNotRegistered` | That one device is gone | **Prune the token immediately.** A device that genuinely returns re-registers on next login, so eager pruning costs nothing and stops a known-dead token being retried forever. |
+| `MismatchSenderId`, `InvalidCredentials` | Every push to that platform is failing | Never prune — the tokens are fine, the credentials are not. Logged to stdout as well, since it is otherwise invisible. Fix via EAS in the mobile repo. |
+| Anything else | Transient or message-level | Log and move on. |
+
+Expo echoes the token back in `details.expoPushToken` on errors. Prefer that over
+positional alignment when attributing a failure — mis-attributing would prune a
+healthy device's token instead of the dead one.
+
+A whole-batch failure (non-200, or Expo unreachable) is caught: the notification rows
+stand with `dispatched_at` NULL and the triggering write is never rolled back.
 
 ## 7a. Photo storage (production step attachments)
 
@@ -358,11 +374,11 @@ no active recipient rows, the notification silently reaches no one while everyth
 else still reports success. The service logs a warning to both the logger and stdout
 in that case — deliberately noisy, because this failure is otherwise invisible.
 
-⚠ **No push is sent yet.** Epic 5 records rows in `notifications_log` with
-`dispatched_at` NULL; Azure Notification Hubs is Epic 7 and replaces
-`NotificationService` behind `INotificationService` without touching the endpoints
-that fire events. `dispatched_at` is what distinguishes "we decided to notify" from
-"we actually pushed".
+**`dispatched_at` distinguishes "we decided to notify" from "we got it to a device".**
+Rows are written before the push is attempted, so a delivery failure still leaves the
+notification in the in-app list; only users a push actually reached get the column
+stamped. A row with `dispatched_at` NULL means recorded but undelivered — no device
+registered, Expo unreachable, or the token was dead.
 
 A notification failure must never roll back the write that triggered it — delivery is
 not fatal (§7), and the user's refresh button is the fallback.
@@ -421,8 +437,9 @@ not fatal (§7), and the user's refresh button is the fallback.
 5. **Epic 5 — Store manager flow:** invoicing handoff, item logistics
    status updates, raw material requests.
 6. **Epic 6 — Outsourcing/import flow.**
-7. **Epic 7 — Notifications:** Notification Hubs integration, device token
+7. **Epic 7 — Notifications:** Expo Push API integration, device token
    registration, notifications_log, wiring into Epics 3–6's transitions.
+   (Superseded the original Notification Hubs plan — see §7.)
 8. **Epic 8 — Inventory search, order history, dashboards (read APIs).**
 
 Ask before reordering or collapsing epics — the sequencing exists so the

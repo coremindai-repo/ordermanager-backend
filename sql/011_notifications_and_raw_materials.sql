@@ -46,8 +46,9 @@ CREATE TABLE notifications_log (
     line_item_id UNIQUEIDENTIFIER NULL REFERENCES order_line_items(id),
     title NVARCHAR(200) NOT NULL,
     body NVARCHAR(1000) NULL,
-    -- Null until Epic 7 wires up Notification Hubs; until then nothing is dispatched,
-    -- only recorded. Lets "decided to notify" be told apart from "actually pushed".
+    -- Stamped only when a push actually reached the device via the Expo Push API.
+    -- NULL means recorded but undelivered — no device registered, Expo unreachable,
+    -- or the token was dead. Lets "decided to notify" be told apart from "pushed".
     dispatched_at DATETIME2 NULL,
     sent_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
 );

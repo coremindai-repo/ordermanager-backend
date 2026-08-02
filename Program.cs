@@ -30,8 +30,11 @@ builder.Services.AddSingleton<TransitionValidator>();
 builder.Services.AddSingleton<OrderReader>();
 builder.Services.AddSingleton<IPhotoStorage, PhotoStorage>();
 
-// Records notifications but sends none — Azure Notification Hubs is Epic 7, which
-// replaces this implementation behind the same interface.
+// Push goes via Expo, which brokers on to FCM/APNs — no Firebase or Apple credentials
+// live in this repo (CLAUDE.md §7).
+builder.Services.AddHttpClient<IExpoPushClient, ExpoPushClient>();
+builder.Services.AddSingleton<IDeviceTokenStore, SqlDeviceTokenStore>();
+builder.Services.AddSingleton<PushDispatcher>();
 builder.Services.AddSingleton<INotificationService, NotificationService>();
 
 // SOHO: no real client exists yet (the client has not supplied their API). The stub

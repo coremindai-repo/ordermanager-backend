@@ -22,20 +22,21 @@ public interface INotificationService
 }
 
 /// <summary>
-/// Epic 5 implementation: resolves recipients from notification_recipients and writes
-/// notifications_log, but dispatches nothing.
+/// Resolves recipients from notification_recipients, records the notification, and
+/// pushes it via Expo.
 ///
-/// ⚠ NO PUSH IS SENT YET. Azure Notification Hubs is Epic 7 (CLAUDE.md §9). Rows land
-/// with dispatched_at NULL, which is how "we decided to notify" is told apart from
-/// "we actually pushed". Epic 7 replaces this class behind the same interface; the
-/// endpoints firing events do not change.
+/// `notifications_log.dispatched_at` is stamped only for users a push actually reached,
+/// so the log distinguishes "we decided to notify" from "we got it to a device". Rows
+/// are written whether or not delivery succeeds (CLAUDE.md §7) — the in-app
+/// notification list reads from here regardless of whether the OS push was seen.
 ///
-/// Delivery is not fatal (CLAUDE.md §7): a failure here must never roll back the
-/// status change that triggered it — the user's refresh button is the fallback.
+/// Delivery is not fatal: a failure here must never roll back the status change that
+/// triggered it — the user's refresh button is the fallback.
 /// </summary>
 public sealed class NotificationService(
     ISqlConnectionFactory connectionFactory,
     IConfiguration configuration,
+    PushDispatcher dispatcher,
     ILogger<NotificationService> logger) : INotificationService
 {
     private readonly Guid _clientId = Guid.Parse(
@@ -79,6 +80,8 @@ public sealed class NotificationService(
             return 0;
         }
 
+        // Recorded before dispatch, so a push failure still leaves the notification in
+        // the in-app list rather than losing it.
         foreach (var userId in recipients)
         {
             await connection.ExecuteAsync(
@@ -95,9 +98,32 @@ public sealed class NotificationService(
                 });
         }
 
+        PushDispatchResult result;
+        try
+        {
+            result = await dispatcher.DispatchAsync(recipients, notification);
+        }
+        catch (Exception ex)
+        {
+            // Expo unreachable, or a whole-batch rejection. The rows above stand with
+            // dispatched_at NULL, which is exactly what that column is for.
+            logger.LogError(ex,
+                "Push dispatch for '{EventType}' failed entirely; {Count} notification(s) recorded but undelivered",
+                notification.Type, recipients.Count);
+            return recipients.Count;
+        }
+
+        if (result.DeliveredToUserIds.Count > 0)
+        {
+            await connection.ExecuteAsync(
+                @"UPDATE notifications_log SET dispatched_at = SYSUTCDATETIME()
+                  WHERE user_id IN @UserIds AND type = @Type AND dispatched_at IS NULL",
+                new { UserIds = result.DeliveredToUserIds, notification.Type });
+        }
+
         logger.LogInformation(
-            "Recorded '{EventType}' for {Count} recipient(s). No push sent — Notification Hubs arrives in Epic 7.",
-            notification.Type, recipients.Count);
+            "'{EventType}': {Recipients} recipient(s), {Delivered} delivered, {Failed} failed, {Pruned} dead token(s) pruned",
+            notification.Type, recipients.Count, result.Delivered, result.Failed, result.TokensPruned);
 
         return recipients.Count;
     }

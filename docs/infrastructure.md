@@ -71,6 +71,18 @@ than silently truncating a client's name.
 
 Local dev mirrors these in `local.settings.json` (gitignored, never committed).
 
+### Push notifications add no Azure resources
+
+Push goes through the **Expo Push API** (`https://exp.host/--/api/v2/push/send`), an
+outbound HTTPS call needing no credentials — so notifications introduced **no** Azure
+resource and nothing to provision or pay for. The originally planned Azure Notification
+Hubs instance was never created and is not needed: Expo already brokers to FCM/APNs, so
+Hubs would have been a second broker in front of the first.
+
+Firebase and Apple credentials live in the mobile repo, configured via EAS. If push
+fails for an entire platform, that is where to look — there is no backend configuration
+governing it.
+
 ### Operational note: workflow templates are cached until redeploy
 
 The active templates are read from SQL once per worker instance and cached for the

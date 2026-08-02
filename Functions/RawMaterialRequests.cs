@@ -45,8 +45,7 @@ public class RawMaterialRequests(
 
         // A factory supervisor sees the requests they raised (contract §3); store
         // managers and company managers procure, so they see everything.
-        var procurementRoles = new[] { "store_manager", "company_manager" };
-        var restrictToOwn = !caller.Roles.Any(r => procurementRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
+        var restrictToOwn = !AccessScope.CanViewAllProcurement(caller.Roles);
 
         using var connection = connectionFactory.CreateConnection();
 

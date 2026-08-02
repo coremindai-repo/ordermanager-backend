@@ -139,8 +139,8 @@ collide. `D4` is a minimum width, not a cap.
   supplier json (nullable), timestamps
 - **outsourcing_requests** — id, requested_by, items json, status,
   supplier json (nullable), timestamps
-- **inventory** — id, product_name, status (`finished`|`semi_finished`),
-  location, quantity
+- ~~**inventory**~~ — **no such table.** Inventory is a *read model over stock
+  orders*, not stored data. See §8a.
 - **notifications_log** — id, user_id, type, order_id, line_item_id, title,
   body, sent_at
 - **device_tokens** — user_id, platform, push_token, updated_at
@@ -420,6 +420,39 @@ not fatal (§7), and the user's refresh button is the fallback.
   mobile app directly (not proxied through this backend) — the backend
   only ever receives and stores the resulting text. Do not build a backend
   proxy for this unless told otherwise.
+
+## 8a. Inventory is derived, not stored
+
+There is **no `inventory` table**, despite the original data model listing one.
+Inventory is a query over data Epics 1–6 already produce: the finished and
+semi-finished line items of `order_type = 'stock'` orders that have not yet been
+delivered. `GET /api/inventory` is read-only over that; nothing writes inventory and
+there is nothing to keep in step.
+
+Do not add an inventory table, a write endpoint, or a hook that writes stock on
+production completion. That was considered and rejected — with the current data model
+it would produce confidently wrong numbers, which is worse than none:
+
+1. **Nothing distinguishes committed from spare.** A `FINISHED` item on a *customer*
+   order is destined for a named customer. Counting it as available stock would have
+   staff promising goods that are already sold. Customer-order items are therefore
+   excluded from the view entirely.
+2. **Nothing would remove it.** Goods leave via `IN_TRANSIT → SENT_TO_STORE →
+   DELIVERED`. An incrementing hook without a matching decrement drifts wrong within
+   days. Deriving sidesteps this: a delivered order simply stops matching the query.
+3. **No product identity.** Line items carry free-text `item_name` with no catalogue,
+   so "Teak Chair" and "Teak chair" would aggregate as two products.
+
+Location is derived too, from the order's position in the post-production chain —
+factory, warehouse, in transit to a store, or at a store
+(`Lib/Inventory/InventoryLocation.cs`). That mapping tracks the process template's
+post-production statuses: **if a future template adds or renames a stage, update it.**
+An unmapped status reports itself rather than guessing, so the gap shows up as an odd
+label rather than sending someone to the wrong building.
+
+Order cancellation and order-type conversion are out of scope for this phase;
+`order_type` is fixed for an order's lifetime, which template v4's branching already
+assumes.
 
 ## 9. Build sequencing (epics)
 

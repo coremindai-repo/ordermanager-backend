@@ -12,13 +12,6 @@ namespace OrderManager.Backend.Functions;
 /// </summary>
 public class GetOrders(ISqlConnectionFactory connectionFactory, JwtService jwtService)
 {
-    /// <summary>
-    /// Roles that may see orders they did not raise. A caller holding none of these
-    /// is scoped to their own orders regardless of what `mine` says — the mobile app
-    /// hiding a tab is a UX convenience, not the security control (contract §3).
-    /// </summary>
-    private static readonly string[] SupervisoryRoles = ["factory_supervisor", "store_manager", "company_manager"];
-
     [Function("GetOrders")]
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "orders")] HttpRequest req)
@@ -32,9 +25,8 @@ public class GetOrders(ISqlConnectionFactory connectionFactory, JwtService jwtSe
         var tab = req.Query["tab"].FirstOrDefault();
         var effectiveStatus = string.IsNullOrWhiteSpace(status) ? tab : status;
 
-        var hasSupervisoryRole = caller.Roles.Any(r => SupervisoryRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
         var requestedMine = string.Equals(req.Query["mine"].FirstOrDefault(), "true", StringComparison.OrdinalIgnoreCase);
-        var restrictToOwn = !hasSupervisoryRole || requestedMine;
+        var restrictToOwn = AccessScope.RestrictOrdersToOwn(caller.Roles, requestedMine);
 
         if (type is not null && !type.Equals("customer", StringComparison.OrdinalIgnoreCase)
                              && !type.Equals("stock", StringComparison.OrdinalIgnoreCase))

@@ -13,8 +13,14 @@ this file first and re-sync both repos before writing code against it.
 - Auth: username/password against an internal Users table. No IAM/SSO.
 - Data refresh: pull-only. Every screen has a manual refresh action that
   re-calls the relevant GET endpoint. No WebSocket/SignalR/long-poll.
-- Notifications: push-only (mobile push via FCM/APNs through Azure
-  Notification Hubs). No email, no SMS.
+- Notifications: push-only, delivered through the **Expo Push API**. The
+  backend posts to `https://exp.host/--/api/v2/push/send` using the device's
+  stored Expo push token; Expo brokers delivery on to FCM and APNs. No email,
+  no SMS.
+  - The backend holds **no Firebase or Apple credentials**. Those are
+    configured on the mobile side via EAS (`eas credentials`), so a delivery
+    failure affecting a whole platform is a mobile-repo concern, not a
+    backend one.
 - No API Management gateway. Functions are called directly over HTTPS.
 
 ## 2. Auth
@@ -46,9 +52,19 @@ Response `200`:
 ### POST /api/auth/register-device
 Registers a push token against a user, for targeted notifications.
 ```json
-{ "platform": "ios | android", "pushToken": "string" }
+{ "platform": "ios | android", "pushToken": "ExponentPushToken[...]" }
 ```
-Called on login and whenever the OS issues a new push token.
+Called on login and whenever Expo issues a new push token.
+
+- **`pushToken` must be an Expo push token** — `ExponentPushToken[...]`, or the
+  legacy `ExpoPushToken[...]` prefix Expo also issues. Obtain it from
+  `Notifications.getExpoPushTokenAsync()`, not from the OS directly.
+- **A raw FCM or APNs token is rejected with `400`.** Sending one means the app
+  registered against the platform rather than through Expo, and the backend
+  cannot deliver to it — Expo would report the failure per-token inside an
+  otherwise-successful response, so it is refused at registration where the
+  error is visible.
+- One token is stored per user per platform; re-registering replaces it.
 
 ## 3. Roles → screen access (used to gate menus/tabs on mobile, enforced again server-side on every call)
 

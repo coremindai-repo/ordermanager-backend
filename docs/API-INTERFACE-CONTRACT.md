@@ -423,7 +423,20 @@ items: finished goods are done, semi-finished goods still need factory work. Bot
 receipt states are terminal — neither converts into the other, and a semi-finished
 item finishes by going through the factory steps, not by re-reporting the receipt.
 Skipping acceptance, going backwards and restating the current status all return
-`409`. Responses carry `nextStatuses` (an array, since `accepted` has two).
+`409`. Responses carry `nextStatuses` as an array.
+
+> **`received_semi_finished` applies to `outsource` only, never `import`.** An
+> outsourcing supplier may do part of the job and return goods needing factory work; an
+> import always arrives complete. An import request attempting it returns `409`
+> `ILLEGAL_TRANSITION` naming the reason.
+>
+> `nextStatuses` reflects this, so it is the reliable thing to drive the UI from rather
+> than a hard-coded pair:
+>
+> | Request method | `nextStatuses` after `accepted` |
+> |---|---|
+> | `outsource` | `["received_finished", "received_semi_finished"]` |
+> | `import` | `["received_finished"]` |
 
 ### GET /api/suppliers
 The predefined picker for outsourcing/import. Optional `method` filter
@@ -477,7 +490,10 @@ recorded twice:
 |---|---|---|
 | `placed` | `WITH_SUPPLIER` | Waiting on the supplier |
 | `received_finished` | `FINISHED` | Done — counts toward the order's completeness |
-| `received_semi_finished` | `SEMI_FINISHED` | Needs a production plan, then the normal factory steps |
+| `received_semi_finished` *(outsource only)* | `SEMI_FINISHED` | Needs a production plan, then the normal factory steps |
+
+So an **imported** item has exactly one path — `WITH_SUPPLIER → FINISHED` — while an
+**outsourced** item has two. A `factory` item never reaches either supplier status.
 
 **Semi-finished items re-enter the same step checklist factory items use** — set a
 production plan via `POST /api/order-line-items/{id}/production-plan` and drive the
@@ -533,7 +549,54 @@ is inactive.
 ## 9. Inventory search
 
 ### GET /api/inventory?query=&status=finished|semi_finished
-Available to all authenticated users.
+Available to all authenticated users — no role restriction.
+
+> **Inventory is derived, not a separate list.** It is a live view of the
+> finished and semi-finished line items of **stock** orders that have not yet
+> been delivered. There is no inventory table and nothing writes to it, so it
+> cannot drift from the orders it describes.
+>
+> Consequences worth knowing on the mobile side:
+> - **Customer-order items never appear**, even when finished — they are
+>   committed to a named customer, so showing them as available stock would
+>   have staff promising goods already sold.
+> - **Delivered orders drop out automatically.** Nothing has to mark stock as
+>   consumed.
+> - **Items mid-production do not appear.** A part-built item sitting on a
+>   production step is work in progress, not stock. Only `FINISHED` and
+>   `SEMI_FINISHED` items are listed.
+
+Response `200`:
+```json
+{
+  "items": [
+    {
+      "lineItemId": "guid",
+      "productName": "string",
+      "status": "finished | semi_finished",
+      "location": "Factory",
+      "locationKind": "factory | warehouse | in_transit | store | unknown",
+      "method": "factory | outsource | import | null",
+      "orderId": "guid",
+      "orderNumber": "STK-2608-0011",
+      "orderStatus": "KEEP_IN_FACTORY",
+      "updatedAt": "2026-08-03T09:12:44.1230000Z"
+    }
+  ],
+  "count": 1
+}
+```
+- `location` is a display label derived from the order's position in the
+  post-production chain — `"Factory"`, `"Warehouse"`, `"In transit to Kochi"`,
+  or the store's name. `locationKind` is the stable machine-readable form; key
+  any UI logic off that rather than parsing the label.
+- `locationKind: "unknown"` means the order sits in a status the mapping does
+  not recognise (most likely a newer process template). `location` then carries
+  the raw status rather than a guessed place — surface it, don't hide it.
+- `query` matches on product name, substring, case-insensitive. `%` and `_` are
+  treated as literal characters, not wildcards.
+- `orderId` / `orderNumber` are included so a physical item can be traced back
+  to the order that produced it.
 
 ## 10. Notifications & history
 
@@ -541,8 +604,98 @@ Available to all authenticated users.
 Server-recorded log of pushes sent to the caller (for the in-app
 notification list, independent of whether the OS push was seen).
 
+Query param: `limit` (1–200, default 50). Always scoped to the caller — there
+is no role that grants sight of another user's notifications.
+
+Response `200`:
+```json
+{
+  "notifications": [
+    {
+      "notificationId": "guid",
+      "type": "order_status_changed | invoice_ready | raw_material_received | item_assigned",
+      "title": "string",
+      "body": "string|null",
+      "orderId": "guid|null",
+      "orderNumber": "string|null",
+      "lineItemId": "guid|null",
+      "sentAt": "2026-08-03T09:12:44.1230000Z",
+      "dispatchedAt": "2026-08-03T09:12:45.6700000Z"
+    }
+  ],
+  "count": 1
+}
+```
+- Newest first.
+- **`dispatchedAt` is null when the notification was recorded but never reached
+  a device** — no device registered, Expo unreachable, or the token was dead.
+  The entry is still shown: the in-app list is the reliable channel and the
+  push is best-effort.
+
 ### GET /api/order-history
 Filtered order/status history, scoped by role per §3.
+
+Query params: `orderId`, `from`, `to` (ISO-8601), `limit` (1–500, default 100).
+
+Order-level and line-item-level history are returned as **one merged
+chronology**, newest first, so an order reads as a single story rather than two
+lists to interleave. Use `scope` to tell them apart.
+
+Response `200`:
+```json
+{
+  "entries": [
+    {
+      "entryId": "guid",
+      "scope": "order | lineItem",
+      "orderId": "guid",
+      "orderNumber": "STK-2608-0011",
+      "lineItemId": "guid|null",
+      "itemName": "string|null",
+      "fromStatus": "IN_PRODUCTION",
+      "toStatus": "KEEP_IN_FACTORY",
+      "notes": "string|null",
+      "changedBy": "Dev Admin",
+      "changedAt": "2026-08-03T09:12:44.1230000Z"
+    }
+  ],
+  "count": 1
+}
+```
+- `fromStatus` is **null on the first entry** for an order or line item — that
+  is creation, which has no prior status.
+- `lineItemId` and `itemName` are null when `scope` is `order`.
+- Scoping is enforced server-side: a caller who cannot see all orders (§3) gets
+  history only for orders they raised, whatever they ask for.
+
+### GET /api/dashboard
+Per-status order counts for the dashboard tab badges, so a dashboard showing
+several tabs does not have to fetch every order in each just to render a number.
+
+Query param: `mine` (bool) — same meaning as on `GET /api/orders`.
+
+Response `200`:
+```json
+{
+  "byStatus": [
+    { "status": "NEW", "name": "New Order Capture", "count": 0 },
+    { "status": "IN_PRODUCTION", "name": "In Production", "count": 3 }
+  ],
+  "unrecognisedStatuses": [],
+  "total": 3,
+  "scope": "all | own"
+}
+```
+- `byStatus` is driven off the active process template and lists **every**
+  status, including those with a count of zero — so a tab never silently
+  disappears because nothing is currently in it. The order matches the
+  template's own status order.
+- `unrecognisedStatuses` holds orders sitting in a status the active template
+  does not define (possible after a template change). Normally empty; if it is
+  not, those orders would otherwise be invisible on every tab.
+- `scope` reports which rule was applied — `own` for a caller restricted to
+  their own orders, `all` otherwise. It reflects what the server decided, not
+  what was requested.
 
 ## 11. Push notification payload (server → device, out of band of REST)
 

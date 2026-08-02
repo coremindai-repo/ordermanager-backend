@@ -70,6 +70,19 @@ Core tables — adjust field lists during build, but keep this table set:
 - **production_step_templates** — id, client_id, version, active,
   template_json (the client-specific factory stage list, e.g. Carpentry,
   Polishing, Upholstery, Finished)
+Order number scheme (fixed — do not change without agreeing it with the
+mobile team, staff read and search on these):
+
+| Order type | Format | Example |
+|---|---|---|
+| Customer | `CUS-` + SOHO sales order number | `CUS-4471` (stubbed: `CUS-STUB471203`) |
+| Stock | `STK-{yyMM}-{sequence:D4}` | `STK-2608-0042` |
+
+The stock sequence comes from the SQL `seq_stock_order_number` sequence. It is
+continuous and never resets — the `yyMM` segment is for human readability only,
+so uniqueness never depends on the date and concurrent submissions cannot
+collide. `D4` is a minimum width, not a cap.
+
 - **orders** — id, order_number, order_type (`customer`|`stock`), soho_order_ref
   (nullable), current_status, store_id (destination), created_by,
   created_at, updated_at
@@ -158,6 +171,28 @@ button is the fallback). No email/SMS provider needed anywhere in this repo.
   customer orders, to obtain the Sales Order number. Treat as a hard
   dependency; if it's down, order submission should fail cleanly (not
   silently create an order without a valid SOHO reference).
+
+  > ### ⚠ SOHO IS CURRENTLY A STUB — NOT A FINISHED INTEGRATION
+  >
+  > The client has not yet provided their SOHO API. `ISohoClient`
+  > (`Lib/Soho/`) defines the contract; the only implementations today are:
+  >
+  > - `StubSohoClient` — returns invented placeholder numbers. Active only
+  >   when `SOHO_MODE=stub`. Placeholders are prefixed `STUB`, so stubbed
+  >   orders read as e.g. `CUS-STUB471203` and are obvious in the database.
+  > - `UnconfiguredSohoClient` — the default. Customer submissions fail with
+  >   `503 SOHO_UNAVAILABLE`. Deliberately the default so a misconfigured
+  >   deploy cannot quietly mint fake references into real client data.
+  >
+  > **Before go-live:** add a real `ISohoClient` implementation and remove
+  > `SOHO_MODE=stub` from the Function App settings. Nothing outside
+  > `Lib/Soho/` should need to change — the endpoint, compensation and
+  > numbering all sit behind the interface.
+  >
+  > Also revisit then: customer order numbers are `CUS-` + SOHO's number
+  > verbatim. If SOHO's real numbers carry their own prefix (e.g. `SO-4471`)
+  > the result doubles up as `CUS-SO-4471`. Left as-is rather than stripping
+  > characters on a guess about a format nobody has seen.
 - **ZOHO invoicing** — no integration. Invoice generation is manual outside
   the app (confirmed from the client wireframes); the app only needs to
   notify the accountant that an order is ready to invoice and later accept

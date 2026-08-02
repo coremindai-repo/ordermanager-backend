@@ -35,6 +35,8 @@ All resources below live in this resource group unless noted.
 - `CLIENT_ID` — `c6c944a9-b531-4c21-a3fd-9a8d6df2b180`, the pilot client. Selects which
   row in `process_templates` / `production_step_templates` the workflow engine loads.
   Not a secret; it is the tenant key for the multi-client template design.
+- `SOHO_MODE` — currently `stub`. **Must be removed before go-live** — see the SOHO
+  section below.
 
 Local dev mirrors these in `local.settings.json` (gitignored, never committed).
 
@@ -83,6 +85,60 @@ None of these are secret in the sense of a password — OIDC means there is no
 client secret to leak — but they're scoped to exactly one resource group via
 the role assignment above. CI build-and-deploy confirmed green as of this
 update.
+
+## ⚠ SOHO integration is a stub, not a finished integration
+
+The client has not provided their SOHO API yet. `SOHO_MODE=stub` is currently set on
+`func-ordermanager-nilambur`, which means **customer orders created against the
+deployed app carry invented sales order references**, not real ones. Stubbed orders
+are visibly marked — their numbers look like `CUS-STUB471203` — so they can be found
+and cleaned up later:
+
+```sql
+SELECT id, order_number FROM orders WHERE soho_order_ref LIKE 'STUB%';
+```
+
+It is set deliberately: there is no separate staging environment (see gaps below), so
+this deployment is also the test environment, and without it customer orders cannot be
+exercised at all. With `SOHO_MODE` unset, customer submissions fail with
+`503 SOHO_UNAVAILABLE` and stock orders continue to work normally.
+
+### How to check which mode is live
+
+Either hit the health endpoint (anonymous, no token needed):
+
+```
+GET https://func-ordermanager-nilambur.azurewebsites.net/api/health
+→ { "status": "ok", "soho": { "mode": "stub", "isPlaceholder": true, "warning": "…" } }
+```
+
+…or look for the startup line in Application Insights traces — the app logs a warning
+on every cold start when it is running stubbed. Both report the SOHO client that is
+actually resolved at runtime, not merely what the app setting says.
+
+## Go-live checklist
+
+Work through this before onboarding real client users. These are the items that are
+safe during the pilot build but **not** safe with real client data.
+
+- [ ] **Confirm `SOHO_MODE` is switched off stub before onboarding real client users.**
+      Implement a real `ISohoClient` (`Lib/Soho/`) against the client's API, register
+      it, and remove the `SOHO_MODE` app setting. Verify via `GET /api/health` that
+      `soho.isPlaceholder` is `false`. **As part of this same step**, purge every
+      placeholder order — they reference sales orders that do not exist in SOHO:
+      ```sql
+      -- inspect first
+      SELECT id, order_number, soho_order_ref, created_at
+      FROM orders WHERE soho_order_ref LIKE 'STUB%';
+      -- then delete these and their dependent rows (materials, history,
+      -- billing_shipping_details, order_line_items) before deleting the orders
+      ```
+- [ ] Remove or rotate the `devadmin` seed account (`sql/003_seed_test_user.sql`) — its
+      password is committed to this repo in plain text.
+- [ ] Replace the `AllowLocalDev` SQL firewall rule with something durable, or remove it.
+- [ ] Re-check role gating on workflow transitions: the seeded templates carry no
+      `allowedRoles`, so any authenticated user can currently perform any legal
+      transition (CLAUDE.md §5).
 
 ## Dev/test data
 

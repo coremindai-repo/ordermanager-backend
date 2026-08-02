@@ -72,12 +72,109 @@ Ready to Deliver, In Production, etc.). `mine=true` restricts to the caller's
 own orders (default behavior for `salesperson` role unless they hold a
 supervisory role too).
 
+> **`tab` — UNCONFIRMED, needs mobile team input.** The backend currently
+> treats `tab` as an alias for `status`, used only when `status` is not
+> supplied. That is a guess based on the tab names in this section being
+> status values. If the dashboard tabs actually map to something else (a
+> group of statuses, or a status plus a role filter), say so and the mapping
+> will be defined here properly before either side relies on it.
+
+Response `200`:
+```json
+{
+  "orders": [
+    {
+      "orderId": "guid",
+      "orderNumber": "string",
+      "orderType": "customer | stock",
+      "currentStatus": "string",
+      "storeName": "string|null",
+      "salespersonName": "string",
+      "lineItemCount": 0,
+      "createdAt": "2026-08-02T10:02:58.8478931Z",
+      "updatedAt": "2026-08-02T10:02:58.8478931Z"
+    }
+  ],
+  "count": 1
+}
+```
+
 ### GET /api/orders/{orderId}
 Full order detail: header, billing/shipping, line items with current status,
-salesperson, showroom, timestamps.
+salesperson, showroom, timestamps. Response `200` — same shape returned by
+`POST /api/orders`:
+```json
+{
+  "orderId": "guid",
+  "orderNumber": "string",
+  "orderType": "customer | stock",
+  "sohoOrderRef": "string|null",
+  "currentStatus": "string",
+  "createdAt": "2026-08-02T10:02:58.8478931Z",
+  "updatedAt": "2026-08-02T10:02:58.8478931Z",
+  "salesperson": { "userId": "guid", "firstName": "string", "lastName": "string" },
+  "store": { "storeId": "guid", "name": "string", "location": "string|null" },
+  "billTo": { },
+  "shipTo": { },
+  "lineItems": [
+    {
+      "lineItemId": "guid",
+      "itemName": "string",
+      "description": "string|null",
+      "currentStatus": "string",
+      "method": "factory | outsource | import | null",
+      "currentStep": "string|null",
+      "materials": [ { } ]
+    }
+  ]
+}
+```
+`404` if the order does not exist.
 
 ### POST /api/orders
 Creates a new order (customer or stock). See §7 for the submit sequence.
+
+Request:
+```json
+{
+  "orderType": "customer | stock",
+  "storeId": "guid|null",
+  "lineItems": [
+    {
+      "itemName": "string",
+      "description": "string|null",
+      "method": "factory | outsource | import | null",
+      "materials": [ { } ]
+    }
+  ],
+  "billTo": { },
+  "shipTo": { }
+}
+```
+- At least one line item is required; every line item requires `itemName`.
+- `storeId`, if supplied, must be an active store (`400` otherwise).
+- Response `201` with the full order detail shape shown under
+  `GET /api/orders/{orderId}` above.
+- `503` with code `SOHO_UNAVAILABLE` if `orderType` is `customer` and SOHO
+  cannot be reached — no order is created. Stock orders never call SOHO.
+
+> **`materials`, `billTo` and `shipTo` are intentionally free-form JSON
+> objects for now.** The backend stores whatever object the app sends,
+> unchanged, because the field lists for the "Add Material", billing and
+> shipping screens have not been shared yet. Once those are confirmed, these
+> shapes should be pinned down here and the backend will tighten its schema
+> to match — so treat the current freedom as temporary, not as a licence to
+> send arbitrary structures long-term.
+
+### Order numbers
+| Order type | Format | Example |
+|---|---|---|
+| Customer | `CUS-` + SOHO sales order number | `CUS-4471` |
+| Stock | `STK-{yyMM}-{sequence}` | `STK-2608-0042` |
+
+While the SOHO integration is stubbed (pre-go-live), customer order numbers
+appear as `CUS-STUB471203` — the `STUB` marker means the reference is a
+placeholder and does not exist in SOHO.
 
 ### POST /api/orders/{orderId}/transition
 Generic status-transition endpoint — the workflow engine. Body:

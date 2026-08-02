@@ -105,9 +105,7 @@ public class LineItemTransition(
             lineItemId = id,
             previousStatus = item.CurrentStatus,
             currentStatus = targetStatus,
-            // SYSUTCDATETIME() comes back as Kind=Unspecified, which would serialise
-            // without the trailing Z and read as local time on the client.
-            updatedAt = DateTime.SpecifyKind(updatedAt.Value, DateTimeKind.Utc).ToString("o"),
+            updatedAt = TimeFormat.Utc(updatedAt.Value),
         });
     }
 }

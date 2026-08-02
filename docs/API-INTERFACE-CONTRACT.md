@@ -559,6 +559,20 @@ Mobile app on receipt: shows OS notification; if the app is foregrounded on
 the relevant screen, surfaces an "Updates available — refresh" banner rather
 than auto-refreshing (no silent background refresh in this scope).
 
+> **Where these fields actually arrive.** The payload above is the logical
+> contract, not the wire format. The Expo Push API takes
+> `{ to, title, body, data }`, so `title` and `body` map to Expo's own fields
+> and the remaining custom fields (`type`, `orderId`, `lineItemId`) are nested
+> under `data`. On the device they are read from
+> `notification.request.content.data`, **not** from the top level:
+>
+> ```js
+> const { type, orderId, lineItemId } = notification.request.content.data;
+> ```
+>
+> `title` and `body` remain where Expo puts them
+> (`notification.request.content.title` / `.body`).
+
 ## 12. Error shape (all endpoints)
 
 ```json

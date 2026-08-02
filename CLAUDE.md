@@ -454,11 +454,13 @@ not fatal (§7), and the user's refresh button is the fallback.
   the app (confirmed from the client wireframes); the app only needs to
   notify the accountant that an order is ready to invoice and later accept
   a manual "invoice generated" status update.
-- **Speech-to-text** (voice order instructions) — **flagged, not yet
-  confirmed in scope.** If confirmed, this is an Azure Speech call from the
-  mobile app directly (not proxied through this backend) — the backend
-  only ever receives and stores the resulting text. Do not build a backend
-  proxy for this unless told otherwise.
+- **Speech-to-text** (voice order instructions) — **confirmed OUT of scope for
+  this pilot.** Deferred to a later phase, not an open question.
+  When it does land, the design already agreed still holds: an Azure Speech
+  call from the mobile app directly, never proxied through this backend, which
+  only ever receives and stores the resulting text. So there is nothing to
+  build here now, and nothing to build here later either — do not add a
+  backend proxy for it.
 
 ## 8a. Inventory is derived, not stored
 

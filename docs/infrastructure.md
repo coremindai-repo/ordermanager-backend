@@ -256,15 +256,13 @@ and needs no seeding. See CLAUDE.md §8a; do not "fix" this by adding one.
 
 - [ ] **Remove or rotate the `devadmin` account** (`sql/003_seed_test_user.sql`). Its
       password is committed to this repo in plain text, and it holds `company_manager`.
-- [ ] **Create real user accounts.** ⚠ **There are no user-management endpoints** —
-      creating a user means inserting into `users` and `user_roles` directly, with a
-      bcrypt hash (work factor 12) generated out of band. `sql/003_seed_test_user.sql`
-      is the working example. Neither the contract nor any epic scoped user CRUD, so
-      decide how staff get onboarded before go-live rather than during it.
+- [ ] **Create real user accounts** by following the runbook below. Accounts are
+      provisioned manually by design for this pilot — a user-management portal is
+      planned for a later phase, so there are deliberately no user CRUD endpoints.
       - Role gating is enforced on actions, so **a user with no roles can log in but do
         almost nothing**. Assign roles deliberately.
-      - There is also **no password reset or change endpoint**. A forgotten password
-        currently requires a manual hash update in the database.
+      - There is **no password reset endpoint**. A forgotten password is handled by
+        re-running step 1 of the runbook and updating the row.
 - [ ] Replace the `AllowLocalDev` SQL firewall rule with something durable, or remove it.
       It is pinned to one developer's IP at one moment in time.
 
@@ -284,6 +282,83 @@ and needs no seeding. See CLAUDE.md §8a; do not "fix" this by adding one.
 - [ ] Remember: **template changes require a redeploy** to take effect, and editing a
       template without redeploying causes instances to disagree. See the caching note
       above.
+
+## Runbook: creating a user account
+
+Accounts are provisioned by hand for this pilot. A user-management portal is planned as
+future work; until then this is the process, and it needs to be followable by whoever
+handles onboarding.
+
+Requires: access to the SQL database (see the firewall note above) and any machine with
+Python or .NET for step 1.
+
+### Step 1 — generate a password hash
+
+Passwords are stored as bcrypt hashes, **work factor 12** (see `Lib/PasswordHasher.cs`).
+Never insert a plain-text password.
+
+Using Python (verified compatible with the BCrypt.Net library the app uses):
+
+```bash
+pip install bcrypt          # once
+python -c "import bcrypt; print(bcrypt.hashpw(b'THE-PASSWORD-HERE', bcrypt.gensalt(12)).decode())"
+```
+
+Output looks like `$2b$12$vmy8ixUD0WaM7bKrdLYGxe...`. Copy it whole, including the
+`$2b$12$` prefix.
+
+Give the password to the user over a channel that is not this hash, and have them treat
+it as theirs — there is no self-service change flow yet.
+
+### Step 2 — insert the user and their roles
+
+```sql
+DECLARE @userId UNIQUEIDENTIFIER = NEWID();
+
+INSERT INTO users (id, username, password_hash, email, first_name, last_name, mobile_no, active)
+VALUES (@userId,
+        'jdoe',                      -- must be unique
+        '$2b$12$...',                -- the hash from step 1
+        'jdoe@example.com',          -- optional
+        'Jane', 'Doe',
+        '9876543210',                -- optional
+        1);
+
+-- One row per role. A user may hold several.
+INSERT INTO user_roles (user_id, role) VALUES (@userId, 'salesperson');
+```
+
+Valid roles — **assign deliberately, because actions are gated on them**:
+
+| Role | Can do |
+|---|---|
+| `salesperson` | Raise orders (`NEW → IN_PRODUCTION`); sees only their own orders |
+| `factory_supervisor` | All production steps, moving orders out of production, dispatch to transit; sees all orders but only raw-material requests they raised |
+| `store_manager` | Invoicing handoff, all store-side movements, raw-material procurement; sees all orders |
+| `company_manager` | Everything `store_manager` does, plus outsourcing/import |
+
+A user with **no** roles can log in and read, but cannot perform almost any state change.
+
+### Step 3 — verify
+
+```bash
+curl -s -X POST https://func-ordermanager-nilambur.azurewebsites.net/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"jdoe","password":"THE-PASSWORD-HERE"}'
+```
+
+A `200` with a token and the expected `roles` array confirms both the hash and the role
+rows. A `401` means the hash does not match — regenerate it rather than guessing.
+
+### Deactivating someone
+
+Set `active = 0` on the `users` row. Login is refused immediately; existing tokens
+remain valid until they expire (up to 12 hours), as tokens are not checked against the
+database per request.
+
+```sql
+UPDATE users SET active = 0 WHERE username = 'jdoe';
+```
 
 ## Dev/test data
 

@@ -112,12 +112,15 @@ Ready to Deliver, In Production, etc.). `mine=true` restricts to the caller's
 own orders (default behavior for `salesperson` role unless they hold a
 supervisory role too).
 
-> **`tab` — UNCONFIRMED, needs mobile team input.** The backend currently
-> treats `tab` as an alias for `status`, used only when `status` is not
-> supplied. That is a guess based on the tab names in this section being
-> status values. If the dashboard tabs actually map to something else (a
-> group of statuses, or a status plus a role filter), say so and the mapping
-> will be defined here properly before either side relies on it.
+> **`tab` — placeholder, to be settled in mobile Epic 1.** The backend currently
+> treats `tab` as an alias for `status`, used only when `status` is not supplied.
+> That is a stand-in, not the final mapping: the real tab-to-status relationship
+> gets defined when the dashboard is built against the wireframes.
+>
+> When it is, update this section first and the backend will follow — it is a
+> small change. If a tab turns out to cover a *group* of statuses, or a status
+> plus a role filter, `tab` stops being an alias and becomes its own concept, so
+> do not build against the current behaviour as though it were settled.
 
 Response `200`:
 ```json
@@ -198,13 +201,17 @@ Request:
 - `503` with code `SOHO_UNAVAILABLE` if `orderType` is `customer` and SOHO
   cannot be reached — no order is created. Stock orders never call SOHO.
 
-> **`materials`, `billTo` and `shipTo` are intentionally free-form JSON
-> objects for now.** The backend stores whatever object the app sends,
-> unchanged, because the field lists for the "Add Material", billing and
-> shipping screens have not been shared yet. Once those are confirmed, these
-> shapes should be pinned down here and the backend will tighten its schema
-> to match — so treat the current freedom as temporary, not as a licence to
-> send arbitrary structures long-term.
+> **`materials`, `billTo` and `shipTo` are free-form JSON by agreement.** The
+> backend stores whatever object the app sends, unchanged, because the field
+> lists for the "Add Material", billing and shipping screens are not available
+> yet. **This is a settled decision for the pilot, not an open question** — the
+> alternative was inventing a column layout that would need migrating once the
+> real fields arrived.
+>
+> It is still temporary in intent. When those screens are defined, pin the
+> shapes down here first and the backend will tighten its schema to match. In
+> the meantime, send the structure the screen actually captures rather than an
+> arbitrary one — whatever the app sends now is what will need migrating later.
 
 ### Order numbers
 | Order type | Format | Example |

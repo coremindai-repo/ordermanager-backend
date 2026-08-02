@@ -110,21 +110,26 @@ transition.
   put fake business relationships in the database looking exactly like real ones.
 - **No `inventory` table at all** — inventory is derived from stock orders. See §4.
 
-### Not built (and why)
-- **User management and password reset.** There are no endpoints. Users are created by
-  SQL insert with a bcrypt hash. Not in the contract, never scoped — but it is how real
-  accounts will have to be created. See open questions.
-- **Order cancellation / order-type conversion.** Explicitly out of scope this phase;
-  `order_type` is fixed for an order's lifetime, which the template branching assumes.
+### Not built — all confirmed decisions, not oversights
+
+Each of these was raised and settled. They are recorded so nobody re-opens them as
+"missing", and so a later phase knows what was deliberately left.
+
+- **User management and password reset.** No endpoints, by decision. The pilot's user
+  group is small and known, so accounts are provisioned by hand — see the runbook in
+  `docs/infrastructure.md`. A user-management portal is planned as future work.
 - **Expo delivery receipts.** We read Expo's immediate *ticket* response and act on it.
   Expo also exposes a delayed *receipts* endpoint reporting failures discovered after
-  acceptance; we do not poll it, so a push accepted by Expo but rejected later by
-  FCM/APNs is not currently detected.
-- **Notification read/unread state.** `notifications_log` records what was sent; there
-  is no per-user read marker.
+  acceptance; we do not poll it. **Accepted for the pilot** — the consequence is that a
+  push Expo accepted but FCM/APNs later rejected shows as delivered. Worth revisiting if
+  delivery reliability becomes a complaint.
+- **Notification read/unread state.** `notifications_log` records what was sent; there is
+  no per-user read marker. A "recently sent" list is sufficient for the pilot.
+- **Order cancellation / order-type conversion.** Out of scope this phase; `order_type`
+  is fixed for an order's lifetime, which the template branching assumes.
+- **Speech-to-text.** Confirmed out of scope for the pilot. If it lands later it is an
+  Azure Speech call from the mobile app, never a backend proxy (CLAUDE.md §8).
 - **ZOHO invoicing** — never in scope; invoicing is manual outside the app.
-- **Speech-to-text** — CLAUDE.md §8 flags it as unconfirmed; if it lands it is an Azure
-  Speech call from the mobile app, not a backend proxy.
 - **API Management, staging slot, Cosmos DB** — all deliberately deferred.
 
 ## 4. Read this before you touch…
@@ -204,11 +209,20 @@ Each of these looks like a bug or an oversight without the reasoning.
 
 ### …free-form JSON columns
 - `materials`, `billTo`, `shipTo`, and raw-material/outsourcing `items` are stored as
-  whatever JSON the app sends. That is temporary: the field lists come from screens that
-  were never shared. When they are, pin the shapes down in the contract and tighten the
-  schema. Do not treat the current freedom as permanent.
+  whatever JSON the app sends. **Agreed to stay this way until the real screen field
+  lists are available** — not an oversight, and not something to tighten unilaterally.
+  When those lists arrive, pin the shapes down in the contract first, then tighten the
+  schema to match. Until then the looseness is the deliberate trade for not inventing a
+  layout that would need migrating.
 
 ### …the `tab` query param
 - `GET /api/orders?tab=` is treated as an alias for `status` when `status` is absent.
-  **That is an unconfirmed guess** made in Epic 3 and still not verified with the mobile
-  team.
+  This is a **placeholder pending the mobile team's actual tab-to-status mapping**, which
+  gets built against the wireframes in mobile Epic 1. Expect to revisit it then; the
+  backend side is a one-line change once the mapping is known.
+
+### …the inventory status filter
+- `status=finished` and `status=semi_finished` map to the literal `FINISHED` and
+  `SEMI_FINISHED` line-item statuses. Items mid-production (`CARPENTRY`, `POLISHING`, …)
+  deliberately **do not appear** — they are work in progress, not stock. Confirmed
+  correct; do not widen it to "anything not finished" without asking.

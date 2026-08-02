@@ -1,0 +1,84 @@
+# Infrastructure
+
+This file records every Azure resource currently provisioned for this
+project. Keep it in sync as later epics add resources — this should always
+reflect what's actually in Azure, not what was originally planned.
+
+Subscription: `Azure subscription 1` (`761807b1-4e09-4429-ae58-4419e856128b`)
+Tenant: `coremind.co.in` (`bee4b7aa-ef0b-47a3-8b1b-986b63440ad1`)
+
+## Resource group
+
+| Name | Region |
+|---|---|
+| `rg-ordermanager-nilambur` | Central India |
+
+All resources below live in this resource group unless noted.
+
+## Resources (Epic 1)
+
+| Resource | Name | Region | Tier / SKU | Notes |
+|---|---|---|---|---|
+| SQL logical server | `sql-ordermanager-nilambur` | Central India | — | FQDN: `sql-ordermanager-nilambur.database.windows.net`. Admin login: `sqladmin`. Password stored only in the Function App's `SQL_CONNECTION_STRING` app setting — not written down anywhere else. |
+| SQL database | `sqldb-ordermanager` | Central India | General Purpose, Serverless, Gen5, 1 vCore ceiling, 0.5 vCore floor, auto-pause after 60 min idle | Pay-per-second compute while active; storage billed separately (~32GB max size configured). |
+| SQL firewall rule | `AllowAzureServices` | — | — | `0.0.0.0`–`0.0.0.0` (the special "allow Azure services" rule). |
+| SQL firewall rule | `AllowLocalDev` | — | — | Single IP, added for local development from the machine that provisioned this epic. **This will need updating/removing as dev machines change** — it is not a durable rule. |
+| Storage account | `stordermanagernilambur` | Central India | Standard_LRS, StorageV2 | Required by the Function App runtime (triggers/bindings state), not used for blob/file storage yet. |
+| Function App | `func-ordermanager-nilambur` | Central India | **Flex Consumption**, runtime `dotnet-isolated`, version `10` | URL: `https://func-ordermanager-nilambur.azurewebsites.net`. Flex Consumption does not support publish-profile (Kudu basic-auth) deployment — see CI section below. |
+| Application Insights | `appi-ordermanager-nilambur` | Central India | Workspace-based, pay-per-GB ingested | Required — the default .NET 10 isolated-worker Functions template wires OpenTelemetry to Azure Monitor at startup and fails to start without a connection string configured. |
+
+### Function App settings (values not recorded here — see Azure Portal / `az functionapp config appsettings list`)
+
+- `SQL_CONNECTION_STRING` — Microsoft.Data.SqlClient connection string to `sqldb-ordermanager`.
+- `JWT_SECRET` — HS256 signing key, 12h token expiry (per API-INTERFACE-CONTRACT.md §2).
+- `APPLICATIONINSIGHTS_CONNECTION_STRING` — points at `appi-ordermanager-nilambur`.
+
+Local dev mirrors these in `local.settings.json` (gitignored, never committed).
+
+## CI/CD
+
+GitHub Actions workflow: `.github/workflows/deploy.yml`, deploys on push to `main`.
+
+Flex Consumption requires Microsoft Entra ID authentication for deployment
+(no publish-profile support), so CI auth uses an OIDC federated credential
+instead of a stored secret:
+
+| Item | Value |
+|---|---|
+| App registration | `gha-ordermanager-backend-deploy` (app/client ID `b03888c3-6234-4bd6-85a1-d236689ee261`) |
+| Role assignment | `Contributor`, scoped to `rg-ordermanager-nilambur` only (not subscription-wide) |
+| Federated credential | Trusts GitHub OIDC tokens for `repo:coremindai-repo/ordermanager-backend:ref:refs/heads/main` |
+
+**Manual step required (not done by this session — no GitHub write access here):**
+add these as GitHub Actions repo secrets under Settings → Secrets and
+variables → Actions:
+
+- `AZURE_CLIENT_ID` = `b03888c3-6234-4bd6-85a1-d236689ee261`
+- `AZURE_TENANT_ID` = `bee4b7aa-ef0b-47a3-8b1b-986b63440ad1`
+- `AZURE_SUBSCRIPTION_ID` = `761807b1-4e09-4429-ae58-4419e856128b`
+
+None of these are secret in the sense of a password — OIDC means there is no
+client secret to leak — but they're scoped to exactly one resource group via
+the role assignment above.
+
+## Dev/test data
+
+A standing test account is seeded via `sql/003_seed_test_user.sql` (committed,
+not ad hoc):
+
+| Username | Password | Role |
+|---|---|---|
+| `devadmin` | `Test@Pilot2026!` | `company_manager` (broadest access, for exercising role-gated endpoints) |
+
+Dev/test use only — rotate or remove before onboarding real client users.
+An earlier ad hoc `devadmin` insert from initial Epic 1 smoke-testing was
+deleted; this one replaces it via the seed script above.
+
+## Known gaps / follow-ups
+
+- The `AllowLocalDev` SQL firewall rule is tied to one developer's current
+  IP. Anyone else doing local development against this database will need
+  their own rule added (`az sql server firewall-rule create`).
+- No staging/slot environment yet — `main` deploys straight to the single
+  production Function App. Revisit if a staging slot becomes necessary
+  (Flex Consumption does support deployment slots).

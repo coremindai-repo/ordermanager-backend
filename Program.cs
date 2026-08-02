@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OrderManager.Backend.Lib;
+using OrderManager.Backend.Lib.Notifications;
 using OrderManager.Backend.Lib.Orders;
 using OrderManager.Backend.Lib.Photos;
 using OrderManager.Backend.Lib.Soho;
@@ -28,6 +29,10 @@ builder.Services.AddSingleton<ITemplateProvider, TemplateProvider>();
 builder.Services.AddSingleton<TransitionValidator>();
 builder.Services.AddSingleton<OrderReader>();
 builder.Services.AddSingleton<IPhotoStorage, PhotoStorage>();
+
+// Records notifications but sends none — Azure Notification Hubs is Epic 7, which
+// replaces this implementation behind the same interface.
+builder.Services.AddSingleton<INotificationService, NotificationService>();
 
 // SOHO: no real client exists yet (the client has not supplied their API). The stub
 // is opt-in via SOHO_MODE=stub and never the default — an unconfigured deployment

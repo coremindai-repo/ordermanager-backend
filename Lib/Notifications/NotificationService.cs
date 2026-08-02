@@ -1,0 +1,104 @@
+using Dapper;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+
+namespace OrderManager.Backend.Lib.Notifications;
+
+/// <summary>An event worth telling someone about (API-INTERFACE-CONTRACT.md §11).</summary>
+public sealed record NotificationEvent(
+    string Type,
+    string Title,
+    string? Body,
+    Guid? OrderId = null,
+    Guid? LineItemId = null);
+
+public interface INotificationService
+{
+    /// <summary>
+    /// Resolves who should hear about this event and records it. Returns how many
+    /// recipients were logged.
+    /// </summary>
+    Task<int> NotifyAsync(NotificationEvent notification);
+}
+
+/// <summary>
+/// Epic 5 implementation: resolves recipients from notification_recipients and writes
+/// notifications_log, but dispatches nothing.
+///
+/// ⚠ NO PUSH IS SENT YET. Azure Notification Hubs is Epic 7 (CLAUDE.md §9). Rows land
+/// with dispatched_at NULL, which is how "we decided to notify" is told apart from
+/// "we actually pushed". Epic 7 replaces this class behind the same interface; the
+/// endpoints firing events do not change.
+///
+/// Delivery is not fatal (CLAUDE.md §7): a failure here must never roll back the
+/// status change that triggered it — the user's refresh button is the fallback.
+/// </summary>
+public sealed class NotificationService(
+    ISqlConnectionFactory connectionFactory,
+    IConfiguration configuration,
+    ILogger<NotificationService> logger) : INotificationService
+{
+    private readonly Guid _clientId = Guid.Parse(
+        configuration["CLIENT_ID"] ?? throw new InvalidOperationException("CLIENT_ID is not configured"));
+
+    public async Task<int> NotifyAsync(NotificationEvent notification)
+    {
+        using var connection = connectionFactory.CreateConnection();
+
+        // A recipient row names either a role (everyone holding it) or one user.
+        var recipients = (await connection.QueryAsync<Guid>(
+            @"SELECT DISTINCT u.id
+              FROM notification_recipients nr
+              LEFT JOIN user_roles ur ON ur.role = nr.recipient_role
+              JOIN users u ON u.id = COALESCE(nr.recipient_user_id, ur.user_id)
+              WHERE nr.client_id = @ClientId
+                AND nr.event_type = @EventType
+                AND nr.active = 1
+                AND u.active = 1",
+            new { ClientId = _clientId, EventType = notification.Type })).ToList();
+
+        if (recipients.Count == 0)
+        {
+            // Configurable routing means it can be configured to nothing. Say so
+            // loudly — a handoff that silently reaches nobody is worse than a failure,
+            // because everything downstream still looks like it worked.
+            logger.LogWarning(
+                "Notification '{EventType}' for order {OrderId} resolved to NO recipients — check notification_recipients for client {ClientId}",
+                notification.Type, notification.OrderId, _clientId);
+
+            // Also to stdout: this host runs with telemetryMode=OpenTelemetry, under
+            // which worker ILogger output goes to Azure Monitor and never appears in
+            // the console or the Azure log stream. That is fine for routine logs, but
+            // this one means a handoff reached nobody — the exact failure that looks
+            // like success from every other angle — so it gets a channel you cannot
+            // miss while developing.
+            Console.WriteLine(
+                $"[warning] Notification '{notification.Type}' resolved to NO recipients. " +
+                $"Nobody was told. Check notification_recipients for client {_clientId}.");
+
+            return 0;
+        }
+
+        foreach (var userId in recipients)
+        {
+            await connection.ExecuteAsync(
+                @"INSERT INTO notifications_log (user_id, type, order_id, line_item_id, title, body, dispatched_at)
+                  VALUES (@UserId, @Type, @OrderId, @LineItemId, @Title, @Body, NULL)",
+                new
+                {
+                    UserId = userId,
+                    notification.Type,
+                    notification.OrderId,
+                    notification.LineItemId,
+                    notification.Title,
+                    notification.Body,
+                });
+        }
+
+        logger.LogInformation(
+            "Recorded '{EventType}' for {Count} recipient(s). No push sent — Notification Hubs arrives in Epic 7.",
+            notification.Type, recipients.Count);
+
+        return recipients.Count;
+    }
+}

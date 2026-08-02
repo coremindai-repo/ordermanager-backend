@@ -334,12 +334,70 @@ them. Re-fetch the order or step to get fresh URLs.
 
 ## 6. Raw materials & outsourcing/import (fixed sub-processes — not templatized)
 
-### GET /api/raw-material-requests
-### POST /api/raw-material-requests
-### POST /api/raw-material-requests/{id}/status
 Statuses: `requested → sent_to_supplier → order_placed → order_accepted → received`.
 Supplier contact (WhatsApp) is a manual step outside the app; the app only
 records the resulting status.
+
+The chain moves **forward one step at a time**. Skipping ahead, going back, and
+re-sending the current status all return `409 ILLEGAL_TRANSITION`; the message names
+the only status that is actually reachable next. Responses carry `nextStatus` (null at
+the end of the chain) so the app can render the next action without hard-coding the
+sequence.
+
+### GET /api/raw-material-requests
+Query param: `status` (any of the five above).
+
+Callers holding `store_manager` or `company_manager` see all requests; anyone else
+sees only the requests they raised themselves (contract §3 — factory supervisors see
+"raw-material requests they raise").
+
+Response `200`:
+```json
+{
+  "requests": [
+    {
+      "requestId": "guid",
+      "items": [ { } ],
+      "status": "requested",
+      "nextStatus": "sent_to_supplier",
+      "supplier": { } ,
+      "notes": "string|null",
+      "requestedBy": { "userId": "guid", "name": "string" },
+      "createdAt": "2026-08-02T11:20:00.0000000Z",
+      "updatedAt": "2026-08-02T11:20:00.0000000Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+### POST /api/raw-material-requests
+```json
+{ "items": [ { } ], "supplier": { }, "notes": "string|null" }
+```
+`items` is required and must be a non-empty JSON array or object. Like `materials`
+elsewhere, `items` and `supplier` are free-form for now — the field lists come from
+screens that have not been shared yet.
+
+Response `201`: `{ "requestId": "guid", "status": "requested", "nextStatus": "sent_to_supplier" }`
+
+### POST /api/raw-material-requests/{id}/status
+```json
+{ "status": "sent_to_supplier", "supplier": { }, "notes": "string|null" }
+```
+`supplier` is merged when supplied and left untouched when omitted, so supplier
+details can be filled in at whichever step they become known.
+
+Response `200`:
+```json
+{
+  "requestId": "guid",
+  "previousStatus": "requested",
+  "status": "sent_to_supplier",
+  "nextStatus": "order_placed",
+  "updatedAt": "2026-08-02T11:21:00.0000000Z"
+}
+```
 
 ### GET /api/outsourcing-requests
 ### POST /api/outsourcing-requests

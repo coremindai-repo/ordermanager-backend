@@ -234,6 +234,39 @@ belongs to the step being updated, that the blob actually exists, that it is und
 the size limit, and that its content type looks like an image. The allowed extension
 list is shared between SAS issuing and confirmation so the two cannot drift.
 
+## 7b. Notification routing — who gets told
+
+"The accountant" in §8 is not a role: `user_roles` has only salesperson,
+factory_supervisor, store_manager and company_manager. Rather than inventing a fifth
+role, recipients are **data**, in `notification_recipients` — a row names an event type
+plus either a role (everyone holding it) or one specific user, never both.
+
+Seeded for the pilot: `invoice_ready` → store_manager + company_manager (contract §3
+already lists "invoicing" under store_manager, and company_manager sees everything
+store_manager does). Appointing a dedicated accountant later is a row insert.
+
+Which transition fires which event is likewise config, not code — the `notifyEvent`
+field on a template transition (see §5). So the whole path is data-driven:
+
+| Question | Answered by |
+|---|---|
+| Which status change notifies? | `notifyEvent` on the transition, in `template_json` |
+| Who receives it? | `notification_recipients` |
+
+⚠ **Configurable routing means it can be configured to nobody.** If an event type has
+no active recipient rows, the notification silently reaches no one while everything
+else still reports success. The service logs a warning to both the logger and stdout
+in that case — deliberately noisy, because this failure is otherwise invisible.
+
+⚠ **No push is sent yet.** Epic 5 records rows in `notifications_log` with
+`dispatched_at` NULL; Azure Notification Hubs is Epic 7 and replaces
+`NotificationService` behind `INotificationService` without touching the endpoints
+that fire events. `dispatched_at` is what distinguishes "we decided to notify" from
+"we actually pushed".
+
+A notification failure must never roll back the write that triggered it — delivery is
+not fatal (§7), and the user's refresh button is the fallback.
+
 ## 8. External integrations
 
 - **SOHO API** — called once, synchronously, during order submission for

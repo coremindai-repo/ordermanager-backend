@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
 using OrderManager.Backend.Lib;
+using OrderManager.Backend.Lib.Notifications;
 using OrderManager.Backend.Lib.Workflow;
 
 namespace OrderManager.Backend.Functions;
@@ -17,11 +19,13 @@ public class OrderTransition(
     ISqlConnectionFactory connectionFactory,
     JwtService jwtService,
     ITemplateProvider templateProvider,
-    TransitionValidator validator)
+    TransitionValidator validator,
+    INotificationService notifications,
+    ILogger<OrderTransition> logger)
 {
     public record TransitionRequest(string TargetStatus, string? Notes, string[]? PhotoUrls);
 
-    private record OrderRow(Guid Id, string CurrentStatus, Guid? StoreId, string OrderType);
+    private record OrderRow(Guid Id, string CurrentStatus, Guid? StoreId, string OrderType, string OrderNumber);
 
     [Function("OrderTransition")]
     public async Task<IActionResult> Run(
@@ -45,7 +49,8 @@ public class OrderTransition(
         await connection.OpenAsync();
 
         var order = await connection.QuerySingleOrDefaultAsync<OrderRow>(
-            @"SELECT id AS Id, current_status AS CurrentStatus, store_id AS StoreId, order_type AS OrderType
+            @"SELECT id AS Id, current_status AS CurrentStatus, store_id AS StoreId,
+                     order_type AS OrderType, order_number AS OrderNumber
               FROM orders WHERE id = @Id",
             new { Id = id });
 
@@ -120,8 +125,27 @@ public class OrderTransition(
 
         transaction.Commit();
 
-        // Epic 7 hooks in here: notification-worthy transitions fire a push after the
-        // write succeeds (CLAUDE.md §7). Intentionally not implemented in this epic.
+        // Fired only after the write commits, and never allowed to undo it: a
+        // notification failure must not lose a status change the user already made
+        // (CLAUDE.md §7 — delivery failure is not fatal, the refresh button is the
+        // fallback). Which transitions notify is template config, not code.
+        if (decision.MatchedRule?.NotifyEvent is { } eventType)
+        {
+            try
+            {
+                await notifications.NotifyAsync(new NotificationEvent(
+                    eventType,
+                    $"Order {order.OrderNumber} is ready to invoice",
+                    $"Order {order.OrderNumber} has moved to {targetStatus} and is awaiting invoicing.",
+                    OrderId: id));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex,
+                    "Transition of order {OrderId} to {Status} succeeded but its '{EventType}' notification failed",
+                    id, targetStatus, eventType);
+            }
+        }
 
         return new OkObjectResult(new
         {

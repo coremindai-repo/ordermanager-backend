@@ -63,6 +63,17 @@ public sealed record TransitionRule
     /// The order-level counterpart of <see cref="Methods"/>.
     /// </summary>
     public IReadOnlyList<string>? OrderTypes { get; init; }
+
+    /// <summary>
+    /// Notification-worthy event fired after this transition commits — one of the push
+    /// types in API-INTERFACE-CONTRACT.md §11 (e.g. "invoice_ready"). Null means the
+    /// transition notifies nobody.
+    ///
+    /// Kept in the template so that which status hands off to whom is config, not
+    /// code: a client whose invoicing trigger is a different status needs no change
+    /// here. Who receives it is separately configurable in notification_recipients.
+    /// </summary>
+    public string? NotifyEvent { get; init; }
 }
 
 public sealed record WorkflowTemplate

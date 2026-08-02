@@ -32,8 +32,23 @@ All resources below live in this resource group unless noted.
 - `SQL_CONNECTION_STRING` — Microsoft.Data.SqlClient connection string to `sqldb-ordermanager`.
 - `JWT_SECRET` — HS256 signing key, 12h token expiry (per API-INTERFACE-CONTRACT.md §2).
 - `APPLICATIONINSIGHTS_CONNECTION_STRING` — points at `appi-ordermanager-nilambur`.
+- `CLIENT_ID` — `c6c944a9-b531-4c21-a3fd-9a8d6df2b180`, the pilot client. Selects which
+  row in `process_templates` / `production_step_templates` the workflow engine loads.
+  Not a secret; it is the tenant key for the multi-client template design.
 
 Local dev mirrors these in `local.settings.json` (gitignored, never committed).
+
+### Operational note: workflow templates are cached until redeploy
+
+The active templates are read from SQL once per worker instance and cached for the
+life of that process. **Editing `process_templates` or `production_step_templates`
+has no effect on the running app until it is redeployed** — intended behaviour, since
+template changes go through client approval and a dev-initiated redeploy anyway.
+
+Because the cache is per instance and Flex Consumption scales instances in and out, a
+template edit *without* a redeploy causes divergence: existing instances keep the old
+rules, newly-started ones pick up the new rules, and which one a request hits is
+arbitrary. Always redeploy after changing a template row. See CLAUDE.md §5.
 
 ## CI/CD
 

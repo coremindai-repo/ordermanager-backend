@@ -9,6 +9,13 @@
     <RootNamespace>OrderManager.Backend</RootNamespace>
   </PropertyGroup>
 
+  <!-- This project sits at the repo root, so its default glob would otherwise pull
+       tests/**/*.cs into the Function App build (and its deployed output). -->
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+    <None Remove="tests/**" />
+  </ItemGroup>
+
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />

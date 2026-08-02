@@ -14,7 +14,7 @@ public class AuthRegisterDevice(ISqlConnectionFactory connectionFactory, JwtServ
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "auth/register-device")] HttpRequest req)
     {
-        var userId = AuthHelper.RequireUserId(req, jwtService);
+        var caller = AuthHelper.RequireCaller(req, jwtService);
 
         var body = await req.ReadFromJsonAsync<RegisterDeviceRequest>();
         if (body?.Platform is not ("ios" or "android"))
@@ -36,7 +36,7 @@ public class AuthRegisterDevice(ISqlConnectionFactory connectionFactory, JwtServ
               WHEN NOT MATCHED THEN
                 INSERT (user_id, platform, push_token, updated_at)
                 VALUES (@UserId, @Platform, @PushToken, SYSUTCDATETIME());",
-            new { UserId = userId, body.Platform, body.PushToken });
+            new { UserId = caller.UserId, body.Platform, body.PushToken });
 
         return new OkObjectResult(new { success = true });
     }

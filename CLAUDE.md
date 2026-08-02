@@ -114,6 +114,30 @@ contract §4–5), validated against whichever template applies:
   (invoice ready, raw materials received, item assigned), fires a push via
   §7.
 
+### Template changes require a redeploy — this is deliberate
+
+The active template is loaded once per worker instance and cached for the
+life of that process. **Editing a template row in SQL does not take effect
+until the Function App is redeployed.** This is intended behaviour, not a
+missing cache-invalidation feature: template changes go through client
+approval and a dev-initiated redeploy, and the redeploy is what cycles the
+instances holding the cache. Do not "fix" this by adding a TTL or an
+invalidation endpoint without raising it first.
+
+The corollary is the part worth remembering: because the cache is per
+*instance* and Flex Consumption scales instances in and out, editing a
+template **without** redeploying leaves already-running instances serving
+the old rules while newly-started instances serve the new ones — the same
+request can then be validated differently depending on which instance
+handles it. Always pair a template edit with a redeploy.
+
+Template shape (`template_json`): every legal move is an explicit
+`{ "from", "to" }` edge. Skipping a stage is illegal because no edge
+exists; a backward move requires an edge marked `"revert": true`. Optional
+`allowedRoles` restricts who may perform a transition — **omitted or empty
+means any authenticated role**, not "deny all". Optional `methods`
+restricts an edge to specific line-item methods; omitted means all methods.
+
 ## 6. Endpoints
 
 Full contract in `/docs/API-INTERFACE-CONTRACT.md` — build to that

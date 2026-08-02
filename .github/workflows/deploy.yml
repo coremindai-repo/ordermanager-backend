@@ -24,9 +24,14 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Run tests
+        run: dotnet test tests/OrderManager.Backend.Tests/OrderManager.Backend.Tests.csproj --configuration Release
+
+      # Target the Function App project explicitly. A bare `dotnet publish` here would
+      # resolve to whatever project/solution sits at the repo root, which can drag the
+      # test project (and xunit) into the deployed package.
       - name: Build and publish
-        run: |
-          dotnet publish --configuration Release --output ./publish-output
+        run: dotnet publish ordermanager-backend.csproj --configuration Release --output ./publish-output
 
       - name: Azure login (OIDC)
         uses: azure/login@v2

@@ -47,11 +47,18 @@ instead of a stored secret:
 |---|---|
 | App registration | `gha-ordermanager-backend-deploy` (app/client ID `b03888c3-6234-4bd6-85a1-d236689ee261`) |
 | Role assignment | `Contributor`, scoped to `rg-ordermanager-nilambur` only (not subscription-wide) |
-| Federated credential | Trusts GitHub OIDC tokens for `repo:coremindai-repo/ordermanager-backend:ref:refs/heads/main` |
+| Federated credential | `github-actions-deploy-main`, subject `repo:coremindai-repo@309092032/ordermanager-backend@1318263972:ref:refs/heads/main` |
 
-**Manual step required (not done by this session — no GitHub write access here):**
-add these as GitHub Actions repo secrets under Settings → Secrets and
-variables → Actions:
+The federated credential subject uses GitHub's immutable owner/repo IDs
+(`309092032` / `1318263972`, verified against the live repo) rather than the
+name-based `repo:coremindai-repo/ordermanager-backend:ref:...` form originally
+configured — the name-based version is what initially failed CI with a
+generic `az` auth-type error. ID-based subjects also survive an org or repo
+rename, where a name-based subject would silently stop matching (or worse,
+match whoever claims the old name).
+
+GitHub Actions repo secrets required under Settings → Secrets and variables →
+Actions (added manually — no GitHub write access from this session):
 
 - `AZURE_CLIENT_ID` = `b03888c3-6234-4bd6-85a1-d236689ee261`
 - `AZURE_TENANT_ID` = `bee4b7aa-ef0b-47a3-8b1b-986b63440ad1`
@@ -59,7 +66,8 @@ variables → Actions:
 
 None of these are secret in the sense of a password — OIDC means there is no
 client secret to leak — but they're scoped to exactly one resource group via
-the role assignment above.
+the role assignment above. CI build-and-deploy confirmed green as of this
+update.
 
 ## Dev/test data
 

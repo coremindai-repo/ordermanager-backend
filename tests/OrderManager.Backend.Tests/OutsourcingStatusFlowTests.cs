@@ -34,13 +34,58 @@ public class OutsourcingStatusFlowTests
     }
 
     [Fact]
-    public void AcceptedBranchesToEitherReceiptState()
+    public void AcceptedBranchesToEitherReceiptState_ForOutsourcing()
     {
-        var options = OutsourcingStatusFlow.NextOptions("accepted");
+        var options = OutsourcingStatusFlow.NextOptions("accepted", "outsource");
 
         Assert.Equal(2, options.Count);
         Assert.Contains("received_finished", options);
         Assert.Contains("received_semi_finished", options);
+    }
+
+    // ---------- Semi-finished is outsourcing-only ----------
+
+    [Fact]
+    public void ImportsCannotBeReceivedSemiFinished()
+    {
+        // An outsourcing supplier may do only part of the job; an import always arrives
+        // complete. Allowing it would put an imported item into SEMI_FINISHED, which
+        // the production template gives it no way out of.
+        Assert.False(OutsourcingStatusFlow.CanTransition("accepted", "received_semi_finished", "import"));
+    }
+
+    [Fact]
+    public void ImportsCanStillBeReceivedFinished()
+    {
+        Assert.True(OutsourcingStatusFlow.CanTransition("accepted", "received_finished", "import"));
+    }
+
+    [Fact]
+    public void AnImportRequestNeverOffersTheSemiFinishedOption()
+    {
+        var options = OutsourcingStatusFlow.NextOptions("accepted", "import");
+
+        Assert.Equal(["received_finished"], options);
+    }
+
+    [Theory]
+    [InlineData("outsource", true)]
+    [InlineData("Outsource", true)]
+    [InlineData("import", false)]
+    [InlineData("IMPORT", false)]
+    [InlineData("factory", false)]
+    public void OnlyOutsourcingCanReturnSemiFinished(string method, bool expected)
+    {
+        Assert.Equal(expected, OutsourcingStatusFlow.CanReturnSemiFinished(method));
+    }
+
+    [Fact]
+    public void AnUnstatedMethodIsTreatedPermissively()
+    {
+        // Null means "not stated", not "import" — callers that genuinely do not know
+        // the method should not be silently narrowed.
+        Assert.True(OutsourcingStatusFlow.CanReturnSemiFinished(null));
+        Assert.True(OutsourcingStatusFlow.CanTransition("accepted", "received_semi_finished"));
     }
 
     [Theory]

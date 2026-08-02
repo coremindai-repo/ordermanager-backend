@@ -82,7 +82,9 @@ public class OutsourcingRequests(
             requestId = (Guid)r.id,
             method = (string)r.method,
             status = (string)r.status,
-            nextStatuses = OutsourcingStatusFlow.NextOptions((string)r.status),
+            // Method-aware, so an import request never advertises a semi-finished
+            // option it cannot take.
+            nextStatuses = OutsourcingStatusFlow.NextOptions((string)r.status, (string)r.method),
             supplier = r.supplier_id is null
                 ? null
                 : new { supplierId = (Guid)r.supplier_id, name = (string)r.supplier_name },
@@ -200,7 +202,7 @@ public class OutsourcingRequests(
             requestId = id,
             method = body.Method,
             status = OutsourcingStatusFlow.Initial,
-            nextStatuses = OutsourcingStatusFlow.NextOptions(OutsourcingStatusFlow.Initial),
+            nextStatuses = OutsourcingStatusFlow.NextOptions(OutsourcingStatusFlow.Initial, body.Method),
             lineItemsAdvanced = moved,
         })
         { StatusCode = StatusCodes.Status201Created };
@@ -241,9 +243,20 @@ public class OutsourcingRequests(
             throw new AppException(StatusCodes.Status404NotFound, "NOT_FOUND", $"Outsourcing request {id} not found");
         }
 
-        if (!OutsourcingStatusFlow.CanTransition(request.Status, targetStatus))
+        // Method-aware: only outsourcing can return semi-finished goods.
+        if (!OutsourcingStatusFlow.CanTransition(request.Status, targetStatus, request.Method))
         {
-            var options = OutsourcingStatusFlow.NextOptions(request.Status);
+            var options = OutsourcingStatusFlow.NextOptions(request.Status, request.Method);
+
+            // Say why, rather than just listing what is allowed — "import cannot be
+            // semi-finished" is the actual answer the caller needs.
+            if (targetStatus == OutsourcingStatusFlow.ReceivedSemiFinished &&
+                !OutsourcingStatusFlow.CanReturnSemiFinished(request.Method))
+            {
+                throw new AppException(StatusCodes.Status409Conflict, "ILLEGAL_TRANSITION",
+                    $"An '{request.Method}' request cannot be received semi-finished — only outsourcing returns partially completed goods. Use '{OutsourcingStatusFlow.ReceivedFinished}'.");
+            }
+
             throw new AppException(StatusCodes.Status409Conflict, "ILLEGAL_TRANSITION",
                 options.Count == 0
                     ? $"A request at '{request.Status}' is complete and cannot move further"
@@ -292,7 +305,7 @@ public class OutsourcingRequests(
             requestId = id,
             previousStatus = request.Status,
             status = targetStatus,
-            nextStatuses = OutsourcingStatusFlow.NextOptions(targetStatus),
+            nextStatuses = OutsourcingStatusFlow.NextOptions(targetStatus, request.Method),
             lineItemsAdvanced,
             // Semi-finished items now need a production plan, same as a factory item.
             requiresProductionPlan = targetStatus == OutsourcingStatusFlow.ReceivedSemiFinished,

@@ -7,9 +7,9 @@ namespace OrderManager.Backend.Tests;
 /// line-item transitions already validate against production_step_templates and the
 /// order-level completeness gate derives its terminal statuses from it.
 ///
-/// Mirrors sql/014_production_step_template_v2.sql.
+/// Mirrors sql/016_production_step_template_v3.sql.
 /// </summary>
-public class ProductionTemplateV2Tests
+public class ProductionTemplateV3Tests
 {
     private readonly TransitionValidator _validator = new();
     private static readonly string[] AnyRole = ["factory_supervisor"];
@@ -18,7 +18,7 @@ public class ProductionTemplateV2Tests
     private const string Outsource = "outsource";
     private const string Import = "import";
 
-    private const string V2Json = """
+    private const string V3Json = """
     {
       "initialStatus": "PENDING",
       "statuses": [
@@ -36,10 +36,10 @@ public class ProductionTemplateV2Tests
         { "from": "PENDING", "to": "UPHOLSTERY", "methods": ["factory"] },
         { "from": "PENDING", "to": "WITH_SUPPLIER", "methods": ["outsource", "import"] },
         { "from": "WITH_SUPPLIER", "to": "FINISHED", "methods": ["outsource", "import"] },
-        { "from": "WITH_SUPPLIER", "to": "SEMI_FINISHED", "methods": ["outsource", "import"] },
-        { "from": "SEMI_FINISHED", "to": "CARPENTRY", "methods": ["outsource", "import"] },
-        { "from": "SEMI_FINISHED", "to": "POLISHING", "methods": ["outsource", "import"] },
-        { "from": "SEMI_FINISHED", "to": "UPHOLSTERY", "methods": ["outsource", "import"] },
+        { "from": "WITH_SUPPLIER", "to": "SEMI_FINISHED", "methods": ["outsource"] },
+        { "from": "SEMI_FINISHED", "to": "CARPENTRY", "methods": ["outsource"] },
+        { "from": "SEMI_FINISHED", "to": "POLISHING", "methods": ["outsource"] },
+        { "from": "SEMI_FINISHED", "to": "UPHOLSTERY", "methods": ["outsource"] },
         { "from": "CARPENTRY", "to": "POLISHING" },
         { "from": "CARPENTRY", "to": "UPHOLSTERY" },
         { "from": "CARPENTRY", "to": "FINISHED" },
@@ -50,10 +50,10 @@ public class ProductionTemplateV2Tests
     }
     """;
 
-    private static WorkflowTemplate V2() => WorkflowTemplate.Parse(V2Json);
+    private static WorkflowTemplate V3() => WorkflowTemplate.Parse(V3Json);
 
     private bool Allowed(string from, string to, string method) =>
-        _validator.Validate(V2(), from, to, AnyRole, method: method).IsAllowed;
+        _validator.Validate(V3(), from, to, AnyRole, method: method).IsAllowed;
 
     // ---------- Factory path unchanged ----------
 
@@ -100,26 +100,43 @@ public class ProductionTemplateV2Tests
         Assert.True(Allowed("WITH_SUPPLIER", "FINISHED", method));
     }
 
-    [Theory]
-    [InlineData(Outsource)]
-    [InlineData(Import)]
-    public void SemiFinishedGoodsComeBackNeedingWork(string method)
+    [Fact]
+    public void OutsourcedGoodsMayComeBackNeedingWork()
     {
-        Assert.True(Allowed("WITH_SUPPLIER", "SEMI_FINISHED", method));
+        // An outsourcing supplier may do only part of the job.
+        Assert.True(Allowed("WITH_SUPPLIER", "SEMI_FINISHED", Outsource));
+    }
+
+    [Fact]
+    public void ImportedGoodsAreNeverSemiFinished()
+    {
+        // An import always arrives complete. Letting one in would strand it: v3 gives
+        // imports no route out of SEMI_FINISHED.
+        Assert.False(Allowed("WITH_SUPPLIER", "SEMI_FINISHED", Import));
+    }
+
+    [Fact]
+    public void FactoryItemsAreNeverSemiFinishedEither()
+    {
+        // A part-built factory item is work in progress sitting on a production step,
+        // not a returned semi-finished state.
+        foreach (var from in new[] { "PENDING", "CARPENTRY", "POLISHING", "UPHOLSTERY" })
+        {
+            Assert.False(Allowed(from, "SEMI_FINISHED", Factory), $"factory {from} -> SEMI_FINISHED");
+        }
     }
 
     // ---------- The re-entry the wireframes describe ----------
 
     [Theory]
-    [InlineData(Outsource, "CARPENTRY")]
-    [InlineData(Outsource, "POLISHING")]
-    [InlineData(Outsource, "UPHOLSTERY")]
-    [InlineData(Import, "CARPENTRY")]
-    [InlineData(Import, "POLISHING")]
-    [InlineData(Import, "UPHOLSTERY")]
-    public void SemiFinishedItemsReEnterTheFactoryChecklistAtAnyStep(string method, string step)
+    [InlineData("CARPENTRY")]
+    [InlineData("POLISHING")]
+    [InlineData("UPHOLSTERY")]
+    public void SemiFinishedItemsReEnterTheFactoryChecklistAtAnyStep(string step)
     {
-        Assert.True(Allowed("SEMI_FINISHED", step, method));
+        // Outsourcing only — the only route into SEMI_FINISHED is also the only route out.
+        Assert.True(Allowed("SEMI_FINISHED", step, Outsource));
+        Assert.False(Allowed("SEMI_FINISHED", step, Import));
     }
 
     [Theory]
@@ -150,13 +167,13 @@ public class ProductionTemplateV2Tests
     {
         // LineItemCompletion derives its terminal set from here, so an outsourced item
         // counts as complete on exactly the same condition as a factory one.
-        Assert.Equal(["FINISHED"], V2().TerminalStatuses);
+        Assert.Equal(["FINISHED"], V3().TerminalStatuses);
     }
 
     [Fact]
     public void AnItemStillWithASupplierDoesNotCountAsComplete()
     {
-        var terminal = V2().TerminalStatuses;
+        var terminal = V3().TerminalStatuses;
 
         Assert.False(LineItemCompletion.AllComplete(["FINISHED", "WITH_SUPPLIER"], terminal));
         Assert.False(LineItemCompletion.AllComplete(["SEMI_FINISHED"], terminal));
@@ -165,7 +182,7 @@ public class ProductionTemplateV2Tests
     [Fact]
     public void AMixOfFactoryAndOutsourcedItemsCompletesOnlyWhenAllReachFinished()
     {
-        var terminal = V2().TerminalStatuses;
+        var terminal = V3().TerminalStatuses;
 
         Assert.True(LineItemCompletion.AllComplete(["FINISHED", "FINISHED"], terminal));
         Assert.False(LineItemCompletion.AllComplete(["FINISHED", "CARPENTRY"], terminal));
@@ -188,7 +205,7 @@ public class ProductionTemplateV2Tests
     public void AnItemWithNoMethodSetCannotStartDownEitherBranch()
     {
         // Method is chosen on the production plan; until then the item goes nowhere.
-        var decision = _validator.Validate(V2(), "PENDING", "CARPENTRY", AnyRole, method: null);
+        var decision = _validator.Validate(V3(), "PENDING", "CARPENTRY", AnyRole, method: null);
 
         Assert.False(decision.IsAllowed);
         Assert.Equal(TransitionOutcome.MethodNotPermitted, decision.Outcome);

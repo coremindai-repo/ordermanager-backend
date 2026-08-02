@@ -257,9 +257,21 @@ outsourced and imported items. Not for flexibility's sake — by necessity:
    leaving production. A "done" state outside the template means gate A can never pass.
 3. The `methods` restriction on transitions exists precisely for this branch.
 
-So the outsource path lives in production step template v2:
-`PENDING → WITH_SUPPLIER → FINISHED` (received finished), or
-`PENDING → WITH_SUPPLIER → SEMI_FINISHED → {factory steps} → FINISHED`.
+So the outsource/import path lives in production step template v3:
+
+| Method | Path |
+|---|---|
+| `factory` | `PENDING → {factory steps} → FINISHED` |
+| `import` | `PENDING → WITH_SUPPLIER → FINISHED` |
+| `outsource` | `PENDING → WITH_SUPPLIER → FINISHED`, **or** `→ SEMI_FINISHED → {factory steps} → FINISHED` |
+
+**`SEMI_FINISHED` is outsourcing-only.** An outsourcing supplier may do part of the job
+and return goods needing factory work; an import always arrives complete, and a
+part-built factory item is work in progress sitting on a production step, not a returned
+semi-finished state. The restriction is enforced twice, deliberately: in the template's
+`methods` on the `SEMI_FINISHED` edges, and in `OutsourcingStatusFlow`, so an *import*
+request cannot report `received_semi_finished` at all. Without the second, a request
+could reach a state its line items have no route out of.
 
 The semi-finished route rejoins the **same** factory step edges rather than
 duplicating them — the onward edges carry no `methods` restriction, so once an item

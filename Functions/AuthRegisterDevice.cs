@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using OrderManager.Backend.Lib;
+using OrderManager.Backend.Lib.Notifications;
 
 namespace OrderManager.Backend.Functions;
 
@@ -24,6 +25,17 @@ public class AuthRegisterDevice(ISqlConnectionFactory connectionFactory, JwtServ
         if (string.IsNullOrWhiteSpace(body.PushToken))
         {
             throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR", "pushToken is required");
+        }
+
+        // Rejected here rather than at the database constraint so the caller gets a
+        // message explaining the problem. A bare FCM/APNs token means the app is not
+        // registering through Expo's notification API — and it would fail at Expo's end
+        // per-token inside a 200 response, which is easy to miss.
+        if (!ExpoPushToken.IsValid(body.PushToken))
+        {
+            throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
+                "pushToken must be an Expo push token, e.g. ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]. " +
+                "Raw FCM/APNs tokens are not accepted — the app registers for push through Expo.");
         }
 
         using var connection = connectionFactory.CreateConnection();

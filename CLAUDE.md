@@ -23,6 +23,24 @@ outsourcing/import).
   decision conflicts with them, stop and ask rather than improvising.
 - Write tests for the workflow engine (status transition validation) before
   building screens/endpoints that depend on it.
+- **Tests that embed a copy of seed or template data can silently certify a
+  retired process.** Several test files paste a template's `template_json`
+  inline rather than reading the live seed. That is deliberate — it keeps the
+  tests fast and dependency-free — but it means the copy does not change when
+  the seed does, so the suite carries on asserting a process that no longer
+  exists, and stays green while doing it.
+
+  `PilotTemplateTests` did exactly this: it asserted the seeded templates
+  carried no role or method restrictions, which was true when written and the
+  opposite of what production step template v2 does. It passed only because it
+  tested its own embedded copy of the retired v1 JSON. It was removed in
+  Epic 6.
+
+  So: when shipping a new template version, grep the tests for the statuses
+  and flags you changed and update or delete the stale copies in the same
+  commit. Worth a periodic sweep for the pattern generally — any test file
+  whose header says "mirrors sql/NNN" is a candidate, and the failure mode is
+  silent, so nothing will prompt you.
 - Do not touch the mobile repository. If a change here requires a change to
   `API-INTERFACE-CONTRACT.md`, flag it and wait for confirmation before
   changing the contract — the mobile team builds against it independently.
@@ -56,7 +74,7 @@ outsourcing/import).
 | Compute | Azure Functions, HTTP-triggered, plain (no Durable Functions) | No flow here needs stateful multi-step orchestration; the one multi-step case (order submit → SOHO call → DB write) is a single function with a try/compensate block |
 | Async messaging | None (no Service Bus) | Procurement/outsourcing/import are human-driven manual steps (WhatsApp, phone) — nothing to decouple with a queue at this scale |
 | Data store | Azure SQL only | Cosmos DB is deferred to Phase 2 (chat/RAG); nothing in this scope needs a document store |
-| Notifications | Synchronous push call (Azure Notification Hubs → FCM/APNs) fired inline after a status-changing write succeeds | Push-only requirement; no queue needed at this volume |
+| Notifications | Synchronous push call to the **Expo Push API** fired inline after a status-changing write succeeds | Push-only requirement; no queue needed at this volume. The mobile app ships via Expo, so Expo already brokers delivery to FCM/APNs — Azure Notification Hubs would add a second broker for nothing. Removes the need for any Firebase or Apple credentials on the backend. |
 | Real-time updates | None — REST GET only, client-initiated refresh | Explicit pilot constraint: no WebSocket/SignalR |
 | Auth | Custom Users table + JWT (HS256, 12h expiry) | No IAM in pilot; small trusted user group |
 | API exposure | Direct HTTPS calls to Functions, no API Management | Deferred until IAM/APIM integration phase |
@@ -217,14 +235,6 @@ Full contract in `/docs/API-INTERFACE-CONTRACT.md` — build to that
 document exactly; it's shared with the mobile team and is the integration
 point between the two repos.
 
-## 7. Notifications
-
-On any status-changing write that matches a notification-worthy transition:
-look up the target user(s)' `device_tokens`, call Azure Notification Hubs
-synchronously, log the attempt to `notifications_log` regardless of
-delivery success (delivery failure is not fatal — the user's refresh
-button is the fallback). No email/SMS provider needed anywhere in this repo.
-
 ## 6a. What is templatized, and what is not
 
 Contract §6 calls raw materials and outsourcing/import "fixed sub-processes — not
@@ -261,6 +271,41 @@ Receiving a request advances its line items automatically, through the same vali
 and writing the same history rows as a manual transition — so no template rule is
 bypassed, and an item the move would be illegal for is skipped and logged rather than
 forced.
+
+## 7. Notifications
+
+On any status-changing write that matches a notification-worthy transition: look up the
+target user(s)' `device_tokens`, call the **Expo Push API**
+(`https://exp.host/--/api/v2/push/send`) synchronously, and log the attempt to
+`notifications_log` regardless of delivery success (delivery failure is not fatal — the
+user's refresh button is the fallback). No email/SMS provider needed anywhere in this
+repo.
+
+### FCM/APNs credentials are NOT a backend concern
+
+The mobile app ships via Expo, so **Expo brokers delivery to FCM and APNs on our
+behalf**. The backend holds an `ExponentPushToken[...]` and posts to one HTTPS endpoint;
+it never sees a Firebase server key, an APNs `.p8`, or an Azure Notification Hubs
+connection string. Do not add any of those here.
+
+Firebase and Apple credentials are configured **in the mobile repo, via EAS**
+(`eas credentials`). If push delivery fails for a whole platform, that is where to look
+— not in this repo's configuration.
+
+This supersedes the earlier plan to route through Azure Notification Hubs: with Expo
+already brokering to FCM/APNs, Hubs would be a second broker in front of the first,
+adding a resource and two sets of credentials to buy nothing.
+
+### Token handling
+
+`device_tokens.push_token` stores Expo push tokens, which look like
+`ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]`. The format is validated on registration —
+a bare FCM or APNs token reaching this column means the mobile side is not going through
+Expo's notification API, and pushing it would fail silently at Expo's end.
+
+Expo's send endpoint reports per-token errors (notably `DeviceNotRegistered`) in its
+response rather than as an HTTP failure, so a 200 from Expo does not mean delivered.
+Tokens reported dead should be removed so they stop being retried.
 
 ## 7a. Photo storage (production step attachments)
 

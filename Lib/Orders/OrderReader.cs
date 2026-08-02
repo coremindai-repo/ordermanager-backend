@@ -1,5 +1,7 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Dapper;
+using OrderManager.Backend.Lib.Photos;
 
 namespace OrderManager.Backend.Lib.Orders;
 
@@ -8,7 +10,7 @@ namespace OrderManager.Backend.Lib.Orders;
 /// Shared so that the POST /api/orders response and the GET detail response cannot
 /// drift apart — the contract says submission returns the created order.
 /// </summary>
-public sealed class OrderReader(ISqlConnectionFactory connectionFactory)
+public sealed class OrderReader(ISqlConnectionFactory connectionFactory, IPhotoStorage photoStorage)
 {
     public async Task<object?> GetDetailAsync(Guid orderId)
     {
@@ -32,7 +34,14 @@ public sealed class OrderReader(ISqlConnectionFactory connectionFactory)
               SELECT m.line_item_id, m.details
               FROM materials m
               JOIN order_line_items li ON li.id = m.line_item_id
-              WHERE li.order_id = @Id;",
+              WHERE li.order_id = @Id;
+
+              SELECT s.id, s.line_item_id, s.step_name, s.sequence, s.status,
+                     s.assigned_names, s.photo_urls, s.started_at, s.completed_at
+              FROM order_line_item_steps s
+              JOIN order_line_items li ON li.id = s.line_item_id
+              WHERE li.order_id = @Id
+              ORDER BY s.sequence;",
             new { Id = orderId });
 
         var order = await multi.ReadSingleOrDefaultAsync();
@@ -44,6 +53,7 @@ public sealed class OrderReader(ISqlConnectionFactory connectionFactory)
         var addresses = await multi.ReadSingleOrDefaultAsync();
         var lineItems = (await multi.ReadAsync()).ToList();
         var materials = (await multi.ReadAsync()).ToList();
+        var steps = (await multi.ReadAsync()).ToList();
 
         return new
         {
@@ -82,8 +92,39 @@ public sealed class OrderReader(ISqlConnectionFactory connectionFactory)
                     .Where(m => (Guid)m.line_item_id == (Guid)li.id)
                     .Select(m => ParseJson((string)m.details))
                     .ToList(),
+                productionSteps = steps
+                    .Where(s => (Guid)s.line_item_id == (Guid)li.id)
+                    .Select(s => new
+                    {
+                        stepId = (Guid)s.id,
+                        stepName = (string)s.step_name,
+                        sequence = (int)s.sequence,
+                        status = (string)s.status,
+                        assignedNames = ParseJson((string?)s.assigned_names),
+                        photos = BuildPhotoLinks((string?)s.photo_urls),
+                        startedAt = s.started_at is null ? null : TimeFormat.Utc((DateTime)s.started_at),
+                        completedAt = s.completed_at is null ? null : TimeFormat.Utc((DateTime)s.completed_at),
+                    })
+                    .ToList(),
             }).ToList(),
         };
+    }
+
+    /// <summary>
+    /// Only blob paths are stored. Read URLs are minted per response and expire
+    /// quickly, so nothing long-lived leaks into logs or client caches.
+    /// </summary>
+    private List<object> BuildPhotoLinks(string? photoUrlsJson)
+    {
+        if (string.IsNullOrWhiteSpace(photoUrlsJson))
+        {
+            return [];
+        }
+
+        var paths = JsonSerializer.Deserialize<List<string>>(photoUrlsJson) ?? [];
+        return paths
+            .Select(object (p) => new { blobPath = p, url = photoStorage.CreateReadUrl(p) })
+            .ToList();
     }
 
     /// <summary>

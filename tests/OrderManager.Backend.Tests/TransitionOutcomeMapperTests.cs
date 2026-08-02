@@ -38,8 +38,10 @@ public class TransitionOutcomeMapperTests
     public void Throws_WhenAskedToMapAnAllowedDecision()
     {
         // Guards against a caller accidentally treating success as a failure path.
+        var rule = new TransitionRule { From = "A", To = "B" };
+
         Assert.Throws<InvalidOperationException>(() =>
-            TransitionOutcomeMapper.ToException(TransitionDecision.Allow()));
+            TransitionOutcomeMapper.ToException(TransitionDecision.Allow(rule)));
     }
 }
 

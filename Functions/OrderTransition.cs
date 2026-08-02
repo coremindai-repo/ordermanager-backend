@@ -61,6 +61,14 @@ public class OrderTransition(
             throw TransitionOutcomeMapper.ToException(decision);
         }
 
+        // Order-wide gate the validator cannot check itself (it holds no DB access):
+        // an order leaves the factory as one unit, so every line item must be finished
+        // — not merely every step within some single line item.
+        if (decision.MatchedRule?.RequiresAllLineItemsComplete == true)
+        {
+            await EnsureAllLineItemsCompleteAsync(connection, id);
+        }
+
         // Persist the template's spelling, not whatever casing the client sent.
         var targetStatus = template.ResolveStatusCode(body.TargetStatus);
 
@@ -109,5 +117,32 @@ public class OrderTransition(
             currentStatus = targetStatus,
             updatedAt = TimeFormat.Utc(updatedAt.Value),
         });
+    }
+
+    private async Task EnsureAllLineItemsCompleteAsync(SqlConnection connection, Guid orderId)
+    {
+        var statuses = (await connection.QueryAsync<string>(
+            "SELECT current_status FROM order_line_items WHERE order_id = @Id",
+            new { Id = orderId })).ToList();
+
+        // "Finished" is whatever the production template treats as terminal, so a
+        // client with different final stages needs no code change here.
+        var productionTemplate = await templateProvider.GetActiveAsync(TemplateKind.ProductionStep);
+        var terminal = productionTemplate.TerminalStatuses;
+
+        if (LineItemCompletion.AllComplete(statuses, terminal))
+        {
+            return;
+        }
+
+        var blocking = LineItemCompletion.IncompleteStatuses(statuses, terminal);
+        var detail = statuses.Count == 0
+            ? "the order has no line items"
+            : $"line items still at: {string.Join(", ", blocking)}";
+
+        // Routed through the mapper so status/code mapping lives in exactly one place.
+        throw TransitionOutcomeMapper.ToException(new TransitionDecision(
+            TransitionOutcome.LineItemsIncomplete,
+            $"Every line item must be complete before this transition — {detail}"));
     }
 }

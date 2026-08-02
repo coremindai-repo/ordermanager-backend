@@ -185,6 +185,15 @@ Server validates the transition against the client's active
 `process_template` (illegal transitions return `409`). Every successful
 transition writes an immutable row to `order_status_history`.
 
+Some transitions are additionally gated on the whole order being finished. Moving
+out of production is one: an order's line items ship together, so the order cannot
+leave the factory until **every** line item on it is complete — not merely every
+step within one line item. Attempting it early returns `409` with code
+`LINE_ITEMS_INCOMPLETE` (distinct from `ILLEGAL_TRANSITION`: the move is legal in
+principle, the order just isn't ready, so the app should prompt to finish the
+remaining items rather than say "not allowed"). The message names the statuses still
+blocking.
+
 ### POST /api/order-line-items/{lineItemId}/transition
 Same shape as above, scoped to a single line item, validated against
 whichever sub-flow the item is currently in (factory production steps,
@@ -203,6 +212,68 @@ Sets the chosen path and step list for one item.
 
 ### POST /api/order-line-items/{lineItemId}/production-steps/{stepId}/update
 Body: `{ "status": "started | complete", "assignedNames": ["string"], "photoUrls": ["string"] }`
+
+- `photoUrls` carries **blob paths** returned by the photo upload flow below — not
+  full URLs, and never the SAS URL. Paths not belonging to this step are rejected
+  with `400`.
+- Step status moves forward only: `pending → started → complete`, or
+  `pending → complete` for a step done in one go. Re-sending the current status
+  returns `409` (so a double tap cannot reset timestamps).
+- Photos accumulate: those attached when starting a step survive its completion.
+- Response `200`:
+```json
+{
+  "stepId": "guid",
+  "lineItemId": "guid",
+  "status": "started | complete",
+  "photos": [ { "blobPath": "string", "url": "https://…?<read SAS>" } ],
+  "allStepsComplete": false,
+  "updatedAt": "2026-08-02T10:36:40.4538577Z"
+}
+```
+
+### Photo upload (production step attachments)
+
+Photos go **from the device straight to Azure Blob storage**, not through the API —
+image bytes never pass through a Function. Three steps:
+
+**1. Ask for an upload URL**
+
+`POST /api/order-line-items/{lineItemId}/production-steps/{stepId}/photo-upload-url`
+```json
+{ "fileExtension": "jpg" }
+```
+Allowed extensions: `jpg`, `jpeg`, `png`, `heic`, `webp` (anything else → `400`).
+
+Response `200`:
+```json
+{
+  "uploadUrl": "https://<account>.blob.core.windows.net/production-photos/…?<write SAS>",
+  "blobPath": "{orderId}/{lineItemId}/{stepId}/{guid}.jpg",
+  "expiresAt": "2026-08-02T10:47:38.4343303Z",
+  "requiredHeaders": { "x-ms-blob-type": "BlockBlob" }
+}
+```
+
+**2. PUT the image bytes to `uploadUrl`**
+
+> ⚠ **The `x-ms-blob-type: BlockBlob` header is required.** Azure rejects the PUT
+> without it. No Azure SDK is needed — a plain HTTPS PUT with the raw bytes as the
+> body is enough. Setting `Content-Type` to the real image type is recommended; the
+> backend checks it on confirmation.
+
+The upload SAS is write-only, scoped to that single blob, and valid for about
+**10 minutes** — request a fresh one rather than storing it.
+
+**3. Confirm by sending `blobPath` in `photoUrls`** on the step update call above.
+
+The backend never sees the bytes, so it validates at this point that the blob belongs
+to the step, actually exists, is within the size limit (15MB), and looks like an
+image. Confirming a path that was never uploaded returns `400`.
+
+**Reading photos back.** Responses return a fresh read URL alongside the stored path.
+Those URLs are short-lived (about **15 minutes**) — display them, don't cache or share
+them. Re-fetch the order or step to get fresh URLs.
 
 ## 6. Raw materials & outsourcing/import (fixed sub-processes — not templatized)
 
@@ -234,6 +305,30 @@ Same manual-step pattern; statuses: `placed → accepted → received_semi_finis
 ### GET /api/stores
 Returns active stores (currently Kochi, Bangalore) for post-production
 routing pickers. Adding a store is a data change, not a deploy.
+
+Response `200`:
+```json
+{ "stores": [ { "storeId": "guid", "name": "string", "location": "string|null" } ] }
+```
+
+### POST /api/orders/{orderId}/destination-store
+Post-production routing — the action behind the store picker above.
+```json
+{ "storeId": "guid" }
+```
+Response `200`:
+```json
+{
+  "orderId": "guid",
+  "store": { "storeId": "guid", "name": "string" },
+  "updatedAt": "2026-08-02T10:40:42.2274777Z"
+}
+```
+
+**Routing is per order, not per line item.** An order's line items ship together: the
+order only leaves the factory once every line item on it is complete, and the whole
+order then moves as one unit to a single store. `400` if the store does not exist or
+is inactive.
 
 ## 9. Inventory search
 
@@ -272,6 +367,20 @@ than auto-refreshing (no silent background refresh in this scope).
 `400` validation, `401` auth, `403` role, `404` not found, `409` illegal
 status transition, `500` server error. Mobile app has one shared error
 handler that maps these to toasts/banners.
+
+Codes seen in practice:
+
+| Code | Status | Meaning |
+|---|---|---|
+| `VALIDATION_ERROR` | 400 | Malformed or missing input |
+| `UNAUTHORIZED` | 401 | Missing, invalid or expired token |
+| `FORBIDDEN` | 403 | Caller's roles do not permit the action |
+| `NOT_FOUND` | 404 | No such order / line item / step |
+| `ILLEGAL_TRANSITION` | 409 | The move is not permitted by the template, or the record changed concurrently |
+| `LINE_ITEMS_INCOMPLETE` | 409 | Transition is gated on every line item being complete, and some are not |
+| `PLAN_LOCKED` | 409 | The production plan cannot change once work has started |
+| `SOHO_UNAVAILABLE` | 503 | SOHO could not be reached; no customer order was created |
+| `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 ## 13. Change process
 

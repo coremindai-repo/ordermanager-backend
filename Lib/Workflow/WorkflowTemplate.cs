@@ -34,6 +34,17 @@ public sealed record TransitionRule
     /// step templates; order-level templates leave it unset.
     /// </summary>
     public IReadOnlyList<string>? Methods { get; init; }
+
+    /// <summary>
+    /// Order-level gate: this transition is refused unless every line item on the
+    /// order has reached a terminal production status. An order ships as one unit —
+    /// it only leaves the factory once all of its items are finished — so the check
+    /// is across the whole order, not within a single line item.
+    ///
+    /// Which transitions carry the gate is template config, not code, so a client
+    /// whose process differs does not need a code change.
+    /// </summary>
+    public bool RequiresAllLineItemsComplete { get; init; }
 }
 
 public sealed record WorkflowTemplate
@@ -48,6 +59,17 @@ public sealed record WorkflowTemplate
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
+
+    /// <summary>
+    /// Statuses with no outgoing transition — the end of the line. Derived from the
+    /// transition graph rather than named explicitly, so a template that adds a new
+    /// final stage does not also have to remember to declare it terminal.
+    /// </summary>
+    public IReadOnlySet<string> TerminalStatuses =>
+        Statuses
+            .Select(s => s.Code)
+            .Where(code => !Transitions.Any(t => string.Equals(t.From, code, StringComparison.OrdinalIgnoreCase)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Returns the template's canonical casing for a status code. Callers may send

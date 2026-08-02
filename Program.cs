@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OrderManager.Backend.Lib;
 using OrderManager.Backend.Lib.Orders;
+using OrderManager.Backend.Lib.Photos;
 using OrderManager.Backend.Lib.Soho;
 using OrderManager.Backend.Lib.Workflow;
 using OrderManager.Backend.Middleware;
@@ -26,6 +27,7 @@ builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<ITemplateProvider, TemplateProvider>();
 builder.Services.AddSingleton<TransitionValidator>();
 builder.Services.AddSingleton<OrderReader>();
+builder.Services.AddSingleton<IPhotoStorage, PhotoStorage>();
 
 // SOHO: no real client exists yet (the client has not supplied their API). The stub
 // is opt-in via SOHO_MODE=stub and never the default — an unconfigured deployment

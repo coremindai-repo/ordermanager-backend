@@ -144,6 +144,20 @@ the old rules while newly-started instances serve the new ones — the same
 request can then be validated differently depending on which instance
 handles it. Always pair a template edit with a redeploy.
 
+### ⚠ OPEN: role gating is not yet applied to any transition
+
+The engine supports per-transition `allowedRoles` and it is unit-tested, but **no
+seeded template sets it**, so today *any authenticated user can perform any legal
+transition*. This affects both Epic 2's order and line-item transitions and Epic 4's
+production step updates and production-plan changes — none of them restrict by role.
+
+This is a known gap awaiting the client's confirmed role-to-transition mapping, not
+an oversight. When that mapping arrives it lands as a template update plus a redeploy
+(a data change, not code). Until then, the mobile app hiding a control is the only
+thing limiting who does what, and contract §3 is explicit that this is a UX
+convenience rather than a security control. Do not treat the current behaviour as
+the intended end state, and re-check it before go-live.
+
 Template shape (`template_json`): every legal move is an explicit
 `{ "from", "to" }` edge. Skipping a stage is illegal because no edge
 exists; a backward move requires an edge marked `"revert": true`. Optional
@@ -164,6 +178,33 @@ look up the target user(s)' `device_tokens`, call Azure Notification Hubs
 synchronously, log the attempt to `notifications_log` regardless of
 delivery success (delivery failure is not fatal — the user's refresh
 button is the fallback). No email/SMS provider needed anywhere in this repo.
+
+## 7a. Photo storage (production step attachments)
+
+Photos are uploaded **by the device directly to Azure Blob storage**, never through
+the Function — image bytes over a factory-floor connection would otherwise occupy a
+Function execution for the whole upload.
+
+Flow: the app asks for an upload URL, PUTs the bytes straight to Blob, then sends the
+returned `blobPath` back on the step update call, which is where the upload is
+validated.
+
+| SAS | Scope | Lifetime | Why |
+|---|---|---|---|
+| Upload | One named blob, create+write only (`sp=cw`, `sr=b`) | **10 minutes** | Long enough for a large photo on a poor connection; short enough that a leaked URL is near-useless. Cannot read, list or delete anything. |
+| Read | One named blob, read only (`sp=r`, `sr=b`) | **15 minutes** | Covers viewing a screen's photos including scrolling back, without being long enough to serve as a shareable or cacheable link. |
+
+Only blob **paths** are stored in the database — never full URLs and never SAS
+tokens. Read URLs are minted per response, so a URL captured from a response body or
+a log stops working shortly afterwards.
+
+Path layout: `{orderId}/{lineItemId}/{stepId}/{guid}.{ext}`.
+
+Because the backend never sees the bytes, everything checkable is checked at
+confirmation time (`PhotoPathValidator` plus a blob properties lookup): that the path
+belongs to the step being updated, that the blob actually exists, that it is under
+the size limit, and that its content type looks like an image. The allowed extension
+list is shared between SAS issuing and confirmation so the two cannot drift.
 
 ## 8. External integrations
 

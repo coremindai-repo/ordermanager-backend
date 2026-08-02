@@ -18,13 +18,29 @@ public enum TransitionOutcome
 
     /// <summary>An edge exists and applies, but the caller holds none of its allowed roles.</summary>
     RoleNotPermitted,
+
+    /// <summary>
+    /// The transition is gated on every line item being finished, and at least one
+    /// is not. Decided by the caller, not this validator — see
+    /// <see cref="TransitionRule.RequiresAllLineItemsComplete"/>.
+    /// </summary>
+    LineItemsIncomplete,
 }
 
-public sealed record TransitionDecision(TransitionOutcome Outcome, string Message)
+public sealed record TransitionDecision(
+    TransitionOutcome Outcome,
+    string Message,
+    /// <summary>
+    /// The rule that permitted the move, when allowed. Callers need it to apply gates
+    /// this validator cannot check itself — it is deliberately dependency-free and so
+    /// cannot query line items.
+    /// </summary>
+    TransitionRule? MatchedRule = null)
 {
     public bool IsAllowed => Outcome == TransitionOutcome.Allowed;
 
-    public static TransitionDecision Allow() => new(TransitionOutcome.Allowed, "Transition allowed");
+    public static TransitionDecision Allow(TransitionRule matchedRule) =>
+        new(TransitionOutcome.Allowed, "Transition allowed", matchedRule);
 }
 
 /// <summary>
@@ -82,14 +98,15 @@ public sealed class TransitionValidator
                 $"'{currentStatus}' cannot transition to '{targetStatus}' for method '{method ?? "(none)"}'");
         }
 
-        if (!applicable.Any(e => RolesPermit(e, callerRoles)))
+        var permitted = applicable.FirstOrDefault(e => RolesPermit(e, callerRoles));
+        if (permitted is null)
         {
             return new TransitionDecision(
                 TransitionOutcome.RoleNotPermitted,
                 $"Caller's roles do not permit transitioning '{currentStatus}' to '{targetStatus}'");
         }
 
-        return TransitionDecision.Allow();
+        return TransitionDecision.Allow(permitted);
     }
 
     private static bool AppliesToMethod(TransitionRule rule, string? method)

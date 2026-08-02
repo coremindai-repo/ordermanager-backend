@@ -23,6 +23,11 @@ public static class TransitionOutcomeMapper
         TransitionOutcome.MethodNotPermitted =>
             new AppException(StatusCodes.Status409Conflict, "ILLEGAL_TRANSITION", decision.Message),
 
+        // Distinct code: the move is legal in principle, the order just isn't ready —
+        // the mobile app should say "finish the remaining items", not "not allowed".
+        TransitionOutcome.LineItemsIncomplete =>
+            new AppException(StatusCodes.Status409Conflict, "LINE_ITEMS_INCOMPLETE", decision.Message),
+
         _ => throw new InvalidOperationException(
             $"Cannot map outcome '{decision.Outcome}' to an error — it is not a denial"),
     };

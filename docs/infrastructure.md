@@ -26,6 +26,34 @@ All resources below live in this resource group unless noted.
 | Storage account | `stordermanagernilambur` | Central India | Standard_LRS, StorageV2 | Required by the Function App runtime (triggers/bindings state), not used for blob/file storage yet. |
 | Function App | `func-ordermanager-nilambur` | Central India | **Flex Consumption**, runtime `dotnet-isolated`, version `10` | URL: `https://func-ordermanager-nilambur.azurewebsites.net`. Flex Consumption does not support publish-profile (Kudu basic-auth) deployment — see CI section below. |
 | Application Insights | `appi-ordermanager-nilambur` | Central India | Workspace-based, pay-per-GB ingested | Required — the default .NET 10 isolated-worker Functions template wires OpenTelemetry to Azure Monitor at startup and fails to start without a connection string configured. |
+| Storage account (photos) | `stordermgrphotosnilambur` | Central India | Standard_LRS, StorageV2, blob public access **disabled** | Production step photos. Separate from the Functions runtime account on purpose — see the per-client pattern below. Single private container `production-photos`; blobs laid out as `{orderId}/{lineItemId}/{stepId}/{guid}.{ext}`. |
+
+## Per-client provisioning pattern
+
+**Every client gets their own resource group containing their own complete stack** —
+SQL server, database, Function App, storage accounts, Application Insights. Nothing is
+shared across clients. A client's orders, database and photos are fully self-contained
+in one resource group, so a client can be onboarded, audited, exported or deleted as a
+unit, and a mis-scoped credential can never reach another client's data.
+
+When onboarding a second client, repeat the whole pattern with their name in place of
+`nilambur`:
+
+| Resource | Pattern | This client |
+|---|---|---|
+| Resource group | `rg-ordermanager-{client}` | `rg-ordermanager-nilambur` |
+| SQL server | `sql-ordermanager-{client}` | `sql-ordermanager-nilambur` |
+| Function App | `func-ordermanager-{client}` | `func-ordermanager-nilambur` |
+| Runtime storage | `stordermanager{client}` | `stordermanagernilambur` |
+| Photo storage | `stordermgrphotos{client}` | `stordermgrphotosnilambur` |
+| App Insights | `appi-ordermanager-{client}` | `appi-ordermanager-nilambur` |
+
+⚠ **Storage account names are capped at 24 characters by Azure**, which is why the
+photo account abbreviates "manager" to "mgr". `stordermgrphotosnilambur` is *exactly*
+24 — meaning this pattern only fits client suffixes of **8 characters or fewer**.
+A longer client name will need a different scheme (e.g. `stphotos{client}`, which
+leaves 16 characters). Decide that when it first comes up and record it here, rather
+than silently truncating a client's name.
 
 ### Function App settings (values not recorded here — see Azure Portal / `az functionapp config appsettings list`)
 
@@ -37,6 +65,9 @@ All resources below live in this resource group unless noted.
   Not a secret; it is the tenant key for the multi-client template design.
 - `SOHO_MODE` — currently `stub`. **Must be removed before go-live** — see the SOHO
   section below.
+- `PHOTO_STORAGE_CONNECTION_STRING` — connection string for `stordermgrphotosnilambur`.
+  Contains the account key, which is what lets the app mint SAS tokens.
+- `PHOTO_CONTAINER_NAME` — `production-photos`.
 
 Local dev mirrors these in `local.settings.json` (gitignored, never committed).
 

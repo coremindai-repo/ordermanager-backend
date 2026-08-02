@@ -79,6 +79,30 @@ Server is the source of truth for authorization — the mobile app hiding a
 tab is a UX convenience, not a security control. Every endpoint below
 re-checks role.
 
+### Role gating on actions — now enforced
+
+Visibility (above) is only half of it. **Which role may perform which state change is
+also enforced server-side**, and a disallowed attempt returns `403 FORBIDDEN` with a
+message naming the roles required.
+
+| Action | Roles |
+|---|---|
+| Create an order (`NEW → IN_PRODUCTION`) | salesperson, company_manager |
+| Production step transitions | factory_supervisor |
+| Move an order out of production | factory_supervisor |
+| `READY_TO_INVOICE → READY_TO_DELIVER` | store_manager, company_manager |
+| Dispatch (`→ IN_TRANSIT`) | factory_supervisor |
+| Store-side movements through `DELIVERED` | store_manager, company_manager |
+| **Reverts** | the same roles as the forward move they undo |
+| Outsourcing/import requests (create and status) | company_manager |
+| Raw material request *status* changes | store_manager, company_manager |
+| Raw material request *creation* | any authenticated user (a factory_supervisor raises them, per the table above) |
+
+For the mobile side this means a screen should not offer an action the caller's role
+cannot perform — a `403` here is a UX bug, not an error state worth surfacing as a
+failure. Note particularly that **reverts are gated as tightly as forward moves**: a
+factory supervisor cannot undo a store-side movement, and vice versa.
+
 ## 4. Orders
 
 ### GET /api/orders

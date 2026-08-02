@@ -161,33 +161,88 @@ actually resolved at runtime, not merely what the app setting says.
 
 ## Go-live checklist
 
-Work through this before onboarding real client users. These are the items that are
-safe during the pilot build but **not** safe with real client data.
+**The single authoritative list of what must happen before real client users touch this
+system.** Everything below is safe during the pilot build and **not** safe with real
+client data. If a note about pre-go-live work exists elsewhere in the docs, it should
+also appear here — this list is the one people will actually check.
 
-- [ ] **Confirm `SOHO_MODE` is switched off stub before onboarding real client users.**
-      Implement a real `ISohoClient` (`Lib/Soho/`) against the client's API, register
-      it, and remove the `SOHO_MODE` app setting. Verify via `GET /api/health` that
-      `soho.isPlaceholder` is `false`. **As part of this same step**, purge every
-      placeholder order — they reference sales orders that do not exist in SOHO:
+Ordered by blast radius: the first two put fabricated data in front of staff, the rest
+are access and hygiene.
+
+### 1. Replace the SOHO stub — BLOCKING
+
+SOHO is not a real integration. `SOHO_MODE=stub` is currently set on
+`func-ordermanager-nilambur`, so **every customer order created so far carries an
+invented sales order reference**.
+
+- [ ] Implement a real `ISohoClient` (`Lib/Soho/`) against the client's API and register
+      it in `Program.cs`.
+- [ ] Remove the `SOHO_MODE` app setting so the safe default applies (an unconfigured
+      SOHO rejects customer orders with `503` rather than inventing references).
+- [ ] Verify: `GET /api/health` returns `soho.isPlaceholder: false`.
+- [ ] Purge placeholder orders — they reference sales orders that do not exist in SOHO:
       ```sql
       -- inspect first
       SELECT id, order_number, soho_order_ref, created_at
       FROM orders WHERE soho_order_ref LIKE 'STUB%';
-      -- then delete these and their dependent rows (materials, history,
-      -- billing_shipping_details, order_line_items) before deleting the orders
+      -- then delete dependent rows (materials, order_line_item_steps,
+      -- line_item_status_history, order_status_history, billing_shipping_details,
+      -- order_line_items) before deleting the orders themselves
       ```
-- [ ] **Populate the `suppliers` table.** It is deliberately created empty
-      (`sql/013_outsourcing.sql`) — the client's real supplier list has not been
-      shared, and seeding invented names would put fake business relationships into
-      the database looking exactly like real ones. Until it has rows, the
-      outsourcing/import picker is empty and requests can only be raised without a
-      supplier.
-- [ ] Remove or rotate the `devadmin` seed account (`sql/003_seed_test_user.sql`) — its
-      password is committed to this repo in plain text.
+- [ ] Re-check customer order numbering. It is `CUS-` + SOHO's number verbatim; if their
+      real format carries its own prefix the result doubles up (`CUS-SO-4471`). See
+      `Lib/OrderNumberFormatter.cs`.
+
+### 2. Populate reference data — BLOCKING
+
+Both tables are deliberately empty. Inventing rows would put fabricated business data in
+front of staff looking exactly like the real thing.
+
+- [ ] **`suppliers`** (`sql/013_outsourcing.sql`) — until populated, the
+      outsourcing/import picker returns nothing and requests can only be raised without
+      a supplier.
+- [ ] Confirm `stores` still reflects reality (currently Kochi and Bangalore).
+
+There is deliberately **no inventory table** — inventory is derived from stock orders
+and needs no seeding. See CLAUDE.md §8a; do not "fix" this by adding one.
+
+### 3. Accounts and access
+
+- [ ] **Remove or rotate the `devadmin` account** (`sql/003_seed_test_user.sql`). Its
+      password is committed to this repo in plain text, and it holds `company_manager`.
+- [ ] Create real user accounts with appropriate roles. Note that role gating is now
+      enforced on actions, so **a user with no roles can log in but do almost nothing** —
+      assign roles deliberately.
 - [ ] Replace the `AllowLocalDev` SQL firewall rule with something durable, or remove it.
-- [ ] Re-check role gating on workflow transitions: the seeded templates carry no
-      `allowedRoles`, so any authenticated user can currently perform any legal
-      transition (CLAUDE.md §5).
+      It is pinned to one developer's IP at one moment in time.
+
+### 4. Confirm the two inferred role assignments
+
+Role gating is enforced (CLAUDE.md §5), but two transitions were not in the client's
+supplied mapping and were inferred as `factory_supervisor`:
+
+- [ ] `READY_TO_DELIVER → KEEP_IN_FACTORY` / `SENT_TO_WAREHOUSE`
+- [ ] `KEEP_IN_FACTORY → SENT_TO_WAREHOUSE`
+
+Both are factory-end goods movements. Confirm with the client, and correct
+`sql/017_process_template_v6.sql` if invoicing clearance should be a store_manager act.
+
+### 5. Push notifications
+
+- [ ] Confirm Firebase/Apple credentials are configured in the **mobile repo via EAS**
+      (`eas credentials`). Nothing is needed in this repo — Expo brokers delivery — but
+      push silently fails for a whole platform if they are missing.
+- [ ] Confirm `notification_recipients` routes each event to the right people. Routing is
+      data: an event with no active rows notifies nobody while everything else reports
+      success.
+
+### 6. Operational
+
+- [ ] Consider a staging environment. `main` currently deploys straight to the single
+      production Function App.
+- [ ] Remember: **template changes require a redeploy** to take effect, and editing a
+      template without redeploying causes instances to disagree. See the caching note
+      above.
 
 ## Dev/test data
 
@@ -203,6 +258,10 @@ An earlier ad hoc `devadmin` insert from initial Epic 1 smoke-testing was
 deleted; this one replaces it via the seed script above.
 
 ## Known gaps / follow-ups
+
+Anything blocking go-live lives in the **Go-live checklist** above, not here — this
+section is for things that are merely inconvenient, so the checklist stays the one place
+worth checking.
 
 - The `AllowLocalDev` SQL firewall rule is tied to one developer's current
   IP. Anyone else doing local development against this database will need

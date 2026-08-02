@@ -180,19 +180,44 @@ the old rules while newly-started instances serve the new ones — the same
 request can then be validated differently depending on which instance
 handles it. Always pair a template edit with a redeploy.
 
-### ⚠ OPEN: role gating is not yet applied to any transition
+### Role gating — enforced
 
-The engine supports per-transition `allowedRoles` and it is unit-tested, but **no
-seeded template sets it**, so today *any authenticated user can perform any legal
-transition*. This affects both Epic 2's order and line-item transitions and Epic 4's
-production step updates and production-plan changes — none of them restrict by role.
+Every transition is gated. Process template v6 and production step template v4 set
+`allowedRoles` on **every** edge; a transition without it would be open to anyone, so
+`RoleGatingTests.NoTransitionIsLeftUngated` fails the build if one is ever added
+without roles.
 
-This is a known gap awaiting the client's confirmed role-to-transition mapping, not
-an oversight. When that mapping arrives it lands as a template update plus a redeploy
-(a data change, not code). Until then, the mobile app hiding a control is the only
-thing limiting who does what, and contract §3 is explicit that this is a UX
-convenience rather than a security control. Do not treat the current behaviour as
-the intended end state, and re-check it before go-live.
+| Transition | Roles |
+|---|---|
+| `NEW → IN_PRODUCTION` | salesperson, company_manager |
+| Production steps (all) | factory_supervisor |
+| Leaving production (both order-type branches) | factory_supervisor |
+| `READY_TO_INVOICE → READY_TO_DELIVER` | store_manager, company_manager |
+| Dispatch (`→ IN_TRANSIT`) | factory_supervisor |
+| Store-side movements through `DELIVERED` | store_manager, company_manager |
+| Reverts | same as the forward move they undo |
+| Outsourcing/import requests | company_manager |
+| Raw material request *transitions* | store_manager, company_manager |
+
+Two things that are easy to get wrong here:
+
+**The supplier edges on the production template are `company_manager`, not
+`factory_supervisor`.** Those line-item moves are not performed by hand — the
+outsourcing request endpoints drive them, validating with the *requester's* roles, and
+`AdvanceLineItemsAsync` skips-and-logs on refusal rather than failing. Gating them to
+factory_supervisor would leave every linked item behind while the request still
+reported success. Change those edges and the endpoint guard together, never separately.
+
+**Raising a raw material request is deliberately ungated**; only its status transitions
+are restricted. Contract §3 says a factory_supervisor raises them — they just do not
+progress them through supplier contact.
+
+Two transitions were not in the client's supplied mapping and are **inferred**:
+`READY_TO_DELIVER → KEEP_IN_FACTORY`/`SENT_TO_WAREHOUSE`, and
+`KEEP_IN_FACTORY → SENT_TO_WAREHOUSE`. Both are factory-end goods movements so they
+follow the other factory-side rules (factory_supervisor). Flagged in
+`sql/017_process_template_v6.sql` — correct there if invoicing clearance is meant to be
+a store_manager act.
 
 ### Removing a status from a template requires migrating orders in the same script
 

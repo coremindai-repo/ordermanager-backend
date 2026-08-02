@@ -3,8 +3,17 @@ using OrderManager.Backend.Lib.Workflow;
 namespace OrderManager.Backend.Tests;
 
 /// <summary>
-/// Exercises the v4 order-type branch. The JSON mirrors sql/010_process_template_v4.sql
-/// verbatim — if that seed changes, update these in the same commit.
+/// Exercises the order-type branch — that invoicing applies to customer orders only and
+/// stock orders route around it.
+///
+/// The JSON below is a **deliberately role-free copy** of that graph, not a mirror of
+/// the live seed (which is now v6 and gates every transition by role). Keeping roles out
+/// here isolates the branching behaviour: a role check failing would otherwise mask a
+/// graph problem, and vice versa. Role gating is covered in RoleGatingTests against the
+/// real v6 template.
+///
+/// If the branch *shape* changes — a new entry point into logistics, a different
+/// order-type split — update this file. Role changes alone do not affect it.
 ///
 /// The rule being protected: invoicing applies to customer orders only, and happens
 /// immediately after production, before any dispatch decision. Stock orders never

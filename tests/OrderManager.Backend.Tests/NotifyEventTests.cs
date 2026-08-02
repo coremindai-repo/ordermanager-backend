@@ -5,7 +5,12 @@ namespace OrderManager.Backend.Tests;
 /// <summary>
 /// The invoicing handoff is declared in the template rather than hard-coded, so that
 /// which status notifies (and therefore which client process triggers the accountant)
-/// is config. These mirror sql/012_process_template_v5.sql.
+/// is config.
+///
+/// The JSON below is a **reduced, role-free template** exercising notifyEvent in
+/// isolation, not a copy of the live seed. The live process template carries the same
+/// notifyEvent on IN_PRODUCTION → READY_TO_INVOICE; RoleGatingTests covers it with roles
+/// applied.
 /// </summary>
 public class NotifyEventTests
 {

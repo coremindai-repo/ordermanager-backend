@@ -151,6 +151,11 @@ public class RawMaterialRequests(
     {
         var caller = AuthHelper.RequireCaller(req, jwtService);
 
+        // Procurement drives the chain. Note that *raising* a request is deliberately
+        // NOT gated: contract §3 says a factory_supervisor raises raw-material requests,
+        // they just do not progress them through supplier contact.
+        AuthHelper.RequireRole(caller, "store_manager", "company_manager");
+
         if (!Guid.TryParse(requestId, out var id))
         {
             throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR", "requestId must be a GUID");

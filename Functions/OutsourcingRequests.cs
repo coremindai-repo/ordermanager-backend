@@ -107,6 +107,10 @@ public class OutsourcingRequests(
     {
         var caller = AuthHelper.RequireCaller(req, jwtService);
 
+        // Outsourcing/import is company_manager territory (contract §3 gives them the
+        // outsourcing/import screens).
+        AuthHelper.RequireRole(caller, "company_manager");
+
         var body = await req.ReadFromJsonAsync<CreateRequest>();
         if (body is null || body.Method is not ("outsource" or "import"))
         {
@@ -216,6 +220,7 @@ public class OutsourcingRequests(
         string requestId)
     {
         var caller = AuthHelper.RequireCaller(req, jwtService);
+        AuthHelper.RequireRole(caller, "company_manager");
 
         if (!Guid.TryParse(requestId, out var id))
         {

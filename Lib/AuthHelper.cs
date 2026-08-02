@@ -9,6 +9,26 @@ public sealed record Caller(Guid UserId, IReadOnlyList<string> Roles);
 public static class AuthHelper
 {
     /// <summary>
+    /// Throws 403 unless the caller holds one of <paramref name="allowedRoles"/>.
+    ///
+    /// For the hard-coded sub-processes (raw materials, outsourcing) whose status chains
+    /// live in code rather than a template — template-driven transitions get the same
+    /// treatment via `allowedRoles` on the transition itself.
+    /// </summary>
+    public static void RequireRole(Caller caller, params string[] allowedRoles)
+    {
+        if (caller.Roles.Any(r => allowedRoles.Contains(r, StringComparer.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        throw new AppException(
+            StatusCodes.Status403Forbidden,
+            "FORBIDDEN",
+            $"This action requires one of: {string.Join(", ", allowedRoles)}");
+    }
+
+    /// <summary>
     /// Resolves the caller from the Bearer token, or throws a 401 AppException.
     /// Roles come from the token so no extra DB round-trip is needed per request;
     /// tokens are short-lived (12h) so a role change takes effect at next login.

@@ -45,6 +45,15 @@ public sealed record TransitionRule
     /// whose process differs does not need a code change.
     /// </summary>
     public bool RequiresAllLineItemsComplete { get; init; }
+
+    /// <summary>
+    /// Order-level gate: refused unless the order has a destination store set
+    /// (`orders.store_id`). Statuses stay generic — "In Transit", never "Sent to
+    /// Kochi" — so the destination is carried as a field rather than multiplied into
+    /// the status list every time a store is added. That only works if the field is
+    /// actually populated before the goods move, which is what this enforces.
+    /// </summary>
+    public bool RequiresDestinationStore { get; init; }
 }
 
 public sealed record WorkflowTemplate

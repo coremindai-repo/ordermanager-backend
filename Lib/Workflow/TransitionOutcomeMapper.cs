@@ -28,6 +28,11 @@ public static class TransitionOutcomeMapper
         TransitionOutcome.LineItemsIncomplete =>
             new AppException(StatusCodes.Status409Conflict, "LINE_ITEMS_INCOMPLETE", decision.Message),
 
+        // Also actionable rather than forbidden: the app should send the user to the
+        // store picker, not tell them the move is illegal.
+        TransitionOutcome.DestinationStoreRequired =>
+            new AppException(StatusCodes.Status409Conflict, "DESTINATION_STORE_REQUIRED", decision.Message),
+
         _ => throw new InvalidOperationException(
             $"Cannot map outcome '{decision.Outcome}' to an error — it is not a denial"),
     };

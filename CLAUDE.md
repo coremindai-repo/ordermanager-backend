@@ -158,12 +158,36 @@ thing limiting who does what, and contract §3 is explicit that this is a UX
 convenience rather than a security control. Do not treat the current behaviour as
 the intended end state, and re-check it before go-live.
 
+### Removing a status from a template requires migrating orders in the same script
+
+The validator matches an order's `current_status` against the active template. Drop a
+status that live orders are sitting in and those orders are **stranded** — every
+transition returns `UnknownCurrentStatus` (409) and they cannot move at all, forwards
+or backwards.
+
+So any template version that removes a status must migrate affected orders in the same
+script. `sql/009_process_template_v3.sql` shows the pattern: it refuses to run (`THROW`)
+if any order still sits in the status being removed, rather than silently stranding
+them. Copy that guard.
+
 Template shape (`template_json`): every legal move is an explicit
 `{ "from", "to" }` edge. Skipping a stage is illegal because no edge
 exists; a backward move requires an edge marked `"revert": true`. Optional
 `allowedRoles` restricts who may perform a transition — **omitted or empty
 means any authenticated role**, not "deny all". Optional `methods`
 restricts an edge to specific line-item methods; omitted means all methods.
+
+Two order-level gates are also config, not code — which transitions carry them is a
+template decision, so a client with a different process needs no code change:
+
+| Flag | Effect | Error when unmet |
+|---|---|---|
+| `requiresAllLineItemsComplete` | Refuses the move unless every line item on the order has reached a terminal production status. An order ships as one unit. | `409 LINE_ITEMS_INCOMPLETE` |
+| `requiresDestinationStore` | Refuses the move unless `orders.store_id` is set. Lets statuses stay generic (`IN_TRANSIT`, never `SENT_TO_KOCHI`) so adding a store is a row insert, not a status explosion. | `409 DESTINATION_STORE_REQUIRED` |
+
+Both return 409 but are deliberately distinct from `ILLEGAL_TRANSITION`: the move is
+legal in principle and the order simply isn't ready, so the app should prompt the user
+to finish the remaining items or pick a store — not report "not allowed".
 
 ## 6. Endpoints
 

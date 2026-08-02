@@ -194,6 +194,58 @@ principle, the order just isn't ready, so the app should prompt to finish the
 remaining items rather than say "not allowed"). The message names the statuses still
 blocking.
 
+Dispatching towards a store is gated too: `→ IN_TRANSIT` returns `409`
+`DESTINATION_STORE_REQUIRED` unless the order already has a destination set via
+`POST /api/orders/{orderId}/destination-store`. Also actionable rather than
+forbidden — the app should open the store picker.
+
+### Order statuses
+
+The current process template (v3):
+
+```
+NEW → IN_PRODUCTION ─┬─[all items complete]→ KEEP_IN_FACTORY ─┬→ SENT_TO_WAREHOUSE
+                     └─[all items complete]→ SENT_TO_WAREHOUSE│
+                                                              │
+        KEEP_IN_FACTORY ──[destination store set]→ IN_TRANSIT ←┘
+        SENT_TO_WAREHOUSE ─[destination store set]→ IN_TRANSIT
+
+IN_TRANSIT → SENT_TO_STORE → RECEIVED_IN_STORE ─┬→ READY_TO_INVOICE → READY_TO_DELIVER ─┐
+                                                └────────────────────→ OUT_FOR_DELIVERY ←┘
+                                                                              ↓
+                                                                          DELIVERED
+```
+
+| Status | Meaning |
+|---|---|
+| `NEW` | Captured, not yet in production |
+| `IN_PRODUCTION` | Being made |
+| `KEEP_IN_FACTORY` | Complete, held at the factory |
+| `SENT_TO_WAREHOUSE` | Moved to the warehouse |
+| `IN_TRANSIT` | Moving to the destination store |
+| `SENT_TO_STORE` | Despatched to the store |
+| `RECEIVED_IN_STORE` | Confirmed arrived at the store |
+| `READY_TO_INVOICE` | Awaiting invoicing (manual, outside the app) |
+| `READY_TO_DELIVER` | Invoiced, ready to go out |
+| `OUT_FOR_DELIVERY` | Out for delivery to the customer |
+| `DELIVERED` | Complete — the only dead end |
+
+**Statuses never name a store.** The destination is carried by the order's `store`
+field, so adding a third store is a data change and does not multiply the status list.
+
+Reverts permitted: `KEEP_IN_FACTORY`/`SENT_TO_WAREHOUSE → IN_PRODUCTION` (rework),
+`IN_TRANSIT → SENT_TO_WAREHOUSE` (shipment recalled), `SENT_TO_STORE → IN_TRANSIT`
+(wrong store), `RECEIVED_IN_STORE → SENT_TO_STORE` (marked received in error),
+`OUT_FOR_DELIVERY → RECEIVED_IN_STORE` (failed delivery). Any other backward move
+returns `409`.
+
+> **Open:** `READY_TO_INVOICE`/`READY_TO_DELIVER` are accountant-driven and, per the
+> wireframes, independent of physical location — but an order has a single status
+> field, so they are currently modelled as an optional route between
+> `RECEIVED_IN_STORE` and `OUT_FOR_DELIVERY`. An order therefore cannot be (say)
+> `IN_TRANSIT` and `READY_TO_INVOICE` at once. If that is needed, it requires a
+> separate invoice status field rather than a template change — flagged, not assumed.
+
 ### POST /api/order-line-items/{lineItemId}/transition
 Same shape as above, scoped to a single line item, validated against
 whichever sub-flow the item is currently in (factory production steps,
@@ -378,6 +430,7 @@ Codes seen in practice:
 | `NOT_FOUND` | 404 | No such order / line item / step |
 | `ILLEGAL_TRANSITION` | 409 | The move is not permitted by the template, or the record changed concurrently |
 | `LINE_ITEMS_INCOMPLETE` | 409 | Transition is gated on every line item being complete, and some are not |
+| `DESTINATION_STORE_REQUIRED` | 409 | Dispatching towards a store with no destination set |
 | `PLAN_LOCKED` | 409 | The production plan cannot change once work has started |
 | `SOHO_UNAVAILABLE` | 503 | SOHO could not be reached; no customer order was created |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |

@@ -25,6 +25,12 @@ public enum TransitionOutcome
     /// <see cref="TransitionRule.RequiresAllLineItemsComplete"/>.
     /// </summary>
     LineItemsIncomplete,
+
+    /// <summary>
+    /// The transition moves goods towards a store but none has been chosen. Decided
+    /// by the caller — see <see cref="TransitionRule.RequiresDestinationStore"/>.
+    /// </summary>
+    DestinationStoreRequired,
 }
 
 public sealed record TransitionDecision(

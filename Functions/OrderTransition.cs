@@ -21,7 +21,7 @@ public class OrderTransition(
 {
     public record TransitionRequest(string TargetStatus, string? Notes, string[]? PhotoUrls);
 
-    private record OrderRow(Guid Id, string CurrentStatus);
+    private record OrderRow(Guid Id, string CurrentStatus, Guid? StoreId);
 
     [Function("OrderTransition")]
     public async Task<IActionResult> Run(
@@ -45,7 +45,7 @@ public class OrderTransition(
         await connection.OpenAsync();
 
         var order = await connection.QuerySingleOrDefaultAsync<OrderRow>(
-            "SELECT id AS Id, current_status AS CurrentStatus FROM orders WHERE id = @Id",
+            "SELECT id AS Id, current_status AS CurrentStatus, store_id AS StoreId FROM orders WHERE id = @Id",
             new { Id = id });
 
         if (order is null)
@@ -67,6 +67,15 @@ public class OrderTransition(
         if (decision.MatchedRule?.RequiresAllLineItemsComplete == true)
         {
             await EnsureAllLineItemsCompleteAsync(connection, id);
+        }
+
+        // Statuses are kept store-agnostic ("In Transit", not "Sent to Kochi"), so the
+        // destination has to exist as data before goods start moving towards it.
+        if (decision.MatchedRule?.RequiresDestinationStore == true && order.StoreId is null)
+        {
+            throw TransitionOutcomeMapper.ToException(new TransitionDecision(
+                TransitionOutcome.DestinationStoreRequired,
+                "This order has no destination store — set one via POST /api/orders/{orderId}/destination-store before dispatching"));
         }
 
         // Persist the template's spelling, not whatever casing the client sent.

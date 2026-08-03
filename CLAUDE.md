@@ -495,6 +495,39 @@ Order cancellation and order-type conversion are out of scope for this phase;
 `order_type` is fixed for an order's lifetime, which template v4's branching already
 assumes.
 
+### Claiming stock into an order
+
+A new order's line item is either something to manufacture, or a **claim** on existing
+stock (`claimLineItemId`). Claiming reassigns the item's `order_id` to the claiming
+order and records where it was made in `originating_order_id`.
+
+⚠ **After a claim, `order_id` answers "who delivers this", not "who made this".** For
+anything reporting on production, the provenance of an item is:
+
+```sql
+COALESCE(originating_order_id, order_id)
+```
+
+`originating_order_id` is set only on the first claim, so it always names where the
+goods were made rather than whoever held them last.
+
+Reassignment was chosen over a secondary reference because every existing query — gate
+A, order detail, the dashboard, inventory — means "the order responsible for delivering
+this", and a claimed item correctly follows. The cost is that the originating order
+loses the item from its detail view and may end up with none.
+
+**`availability_status` is a sale lifecycle, separate from production status:**
+`available → pending_sale → sold`, NULL for items manufactured to order. Both
+transitions are **side effects, never endpoints** — `pending_sale` on claiming, `sold`
+when the claiming order reaches a terminal status, inside the same transaction. There is
+deliberately no way to mark something sold without a real order behind it.
+
+**A claimed semi-finished item keeps its steps.** `SetProductionPlan` therefore permits
+*appending* to a plan in progress but refuses to remove or reset a step that already has
+work against it (`ProductionPlanChange`). The old rule was "no changes once work has
+started"; the intent was always to protect recorded work, not to stop production
+continuing.
+
 ## 9. Build sequencing (epics)
 
 1. **Epic 1 — Foundations:** Users/roles/auth (login, JWT), stores lookup,

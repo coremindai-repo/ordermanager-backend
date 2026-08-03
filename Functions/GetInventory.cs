@@ -61,6 +61,11 @@ public class GetInventory(ISqlConnectionFactory connectionFactory, JwtService jw
               WHERE o.order_type = 'stock'
                 AND li.current_status IN ('FINISHED', 'SEMI_FINISHED')
                 AND o.current_status <> 'DELIVERED'
+                -- Claimed and sold stock is no longer available to sell. A claimed item
+                -- also has its order_id reassigned to a customer order, so it would drop
+                -- out anyway — this filter is what makes that explicit rather than
+                -- incidental, and it keeps working if that ever changes.
+                AND li.availability_status = 'available'
                 AND (@ItemStatus IS NULL OR li.current_status = @ItemStatus)
                 AND (@Query IS NULL OR li.item_name LIKE @Pattern)
               ORDER BY li.item_name",

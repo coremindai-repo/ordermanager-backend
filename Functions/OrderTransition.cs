@@ -123,6 +123,22 @@ public class OrderTransition(
             },
             transaction);
 
+        // Claimed stock becomes sold when the order that claimed it completes. Done as a
+        // side effect rather than a "mark as sold" endpoint on purpose: there is then no
+        // way to record a sale without a real order behind it.
+        //
+        // Inside the transaction, so an order cannot reach a terminal status while its
+        // claimed items still read as merely pending.
+        if (template.TerminalStatuses.Contains(targetStatus))
+        {
+            await connection.ExecuteAsync(
+                @"UPDATE order_line_items
+                  SET availability_status = 'sold', updated_at = SYSUTCDATETIME()
+                  WHERE order_id = @OrderId AND availability_status = 'pending_sale'",
+                new { OrderId = id },
+                transaction);
+        }
+
         transaction.Commit();
 
         // Fired only after the write commits, and never allowed to undo it: a

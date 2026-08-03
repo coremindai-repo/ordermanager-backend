@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.Json;
 using Dapper;
 using Microsoft.AspNetCore.Http;
@@ -28,7 +29,19 @@ public class CreateOrder(
     OrderReader orderReader,
     ILogger<CreateOrder> logger)
 {
-    public record CreateLineItemRequest(string ItemName, string? Description, string? Method, List<JsonElement>? Materials);
+    /// <summary>
+    /// Either a new item to manufacture (ItemName + optional Method/Materials), or a
+    /// claim on an existing inventory item (ClaimLineItemId alone).
+    /// </summary>
+    public record CreateLineItemRequest(
+        string? ItemName,
+        string? Description,
+        string? Method,
+        List<JsonElement>? Materials,
+        Guid? ClaimLineItemId)
+    {
+        public bool IsClaim => ClaimLineItemId is not null;
+    }
 
     public record CreateOrderRequest(
         string OrderType,
@@ -131,10 +144,22 @@ public class CreateOrder(
 
         foreach (var item in body.LineItems)
         {
+            if (item.IsClaim)
+            {
+                // A claim brings its own name, method and production history with it, so
+                // supplying those alongside would be ambiguous about which wins.
+                if (!string.IsNullOrWhiteSpace(item.ItemName) || item.Method is not null)
+                {
+                    throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
+                        "A line item claiming existing inventory must not also supply itemName or method — those come from the claimed item");
+                }
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(item.ItemName))
             {
                 throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
-                    "Every line item requires an itemName");
+                    "Every line item requires either an itemName or a claimLineItemId");
             }
 
             if (item.Method is not null && !ValidMethods.Contains(item.Method, StringComparer.OrdinalIgnoreCase))
@@ -142,6 +167,19 @@ public class CreateOrder(
                 throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
                     $"method must be one of: {string.Join(", ", ValidMethods)}");
             }
+        }
+
+        var duplicateClaims = body.LineItems
+            .Where(i => i.IsClaim)
+            .GroupBy(i => i.ClaimLineItemId!.Value)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+
+        if (duplicateClaims.Count > 0)
+        {
+            throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
+                "The same inventory item cannot be claimed twice on one order");
         }
 
         return body;
@@ -198,11 +236,17 @@ public class CreateOrder(
 
         foreach (var item in request.LineItems!)
         {
+            if (item.IsClaim)
+            {
+                await ClaimInventoryItemAsync(connection, transaction, item.ClaimLineItemId!.Value, orderId, orderNumber, caller);
+                continue;
+            }
+
             var lineItemId = Guid.NewGuid();
 
             await connection.ExecuteAsync(
-                @"INSERT INTO order_line_items (id, order_id, item_name, description, current_status, method)
-                  VALUES (@Id, @OrderId, @ItemName, @Description, @Status, @Method)",
+                @"INSERT INTO order_line_items (id, order_id, item_name, description, current_status, method, availability_status)
+                  VALUES (@Id, @OrderId, @ItemName, @Description, @Status, @Method, @Availability)",
                 new
                 {
                     Id = lineItemId,
@@ -211,6 +255,9 @@ public class CreateOrder(
                     item.Description,
                     Status = initialLineItemStatus,
                     Method = item.Method?.ToLowerInvariant(),
+                    // Stock items are inventory from the moment they exist; a customer's
+                    // own item never is, so it carries no availability at all.
+                    Availability = isCustomerOrder ? null : "available",
                 },
                 transaction);
 
@@ -244,5 +291,102 @@ public class CreateOrder(
         }
 
         transaction.Commit();
+    }
+
+    private record ClaimableItem(
+        Guid Id, Guid OrderId, string ItemName, string CurrentStatus, string OrderType, string? AvailabilityStatus);
+
+    /// <summary>
+    /// Attaches an existing stock item to the new order.
+    ///
+    /// `order_id` is reassigned to the claiming order and `originating_order_id` records
+    /// where the item was made, so every existing query — gate A, order detail, the
+    /// dashboard — keeps meaning "the order responsible for delivering this" and
+    /// correctly follows the item.
+    ///
+    /// The item keeps its id, its production status and all of its
+    /// `order_line_item_steps`, so a semi-finished item arrives with its completed work
+    /// intact and only needs its remaining steps planned.
+    /// </summary>
+    private async Task ClaimInventoryItemAsync(
+        SqlConnection connection,
+        IDbTransaction transaction,
+        Guid lineItemId,
+        Guid claimingOrderId,
+        string claimingOrderNumber,
+        Caller caller)
+    {
+        var item = await connection.QuerySingleOrDefaultAsync<ClaimableItem>(
+            @"SELECT li.id AS Id, li.order_id AS OrderId, li.item_name AS ItemName,
+                     li.current_status AS CurrentStatus, o.order_type AS OrderType,
+                     li.availability_status AS AvailabilityStatus
+              FROM order_line_items li
+              JOIN orders o ON o.id = li.order_id
+              WHERE li.id = @Id",
+            new { Id = lineItemId }, transaction);
+
+        if (item is null)
+        {
+            throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
+                $"Line item {lineItemId} does not exist");
+        }
+
+        // Checked before the order-type rule: a claimed item's order_id now points at
+        // the claiming customer order, so the order-type check would otherwise fire
+        // first and report a misleading reason for what is really "already claimed".
+        if (item.AvailabilityStatus is "pending_sale" or "sold")
+        {
+            throw new AppException(StatusCodes.Status409Conflict, "ITEM_NOT_AVAILABLE",
+                item.AvailabilityStatus == "sold"
+                    ? $"'{item.ItemName}' has already been sold"
+                    : $"'{item.ItemName}' is already claimed by another order");
+        }
+
+        if (!string.Equals(item.OrderType, "stock", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
+                "Only items from stock orders can be claimed — an item on a customer order is already committed to that customer");
+        }
+
+        if (item.CurrentStatus is not ("FINISHED" or "SEMI_FINISHED"))
+        {
+            throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
+                $"Item is at '{item.CurrentStatus}' and is not claimable — only finished or semi-finished stock is inventory");
+        }
+
+        // Optimistic guard on availability, not a read-then-write: two salespeople
+        // claiming the same item at once must not both succeed.
+        //
+        // originating_order_id is set only if not already set, so it always records
+        // where the goods were MADE rather than whoever held them last.
+        var claimed = await connection.ExecuteAsync(
+            @"UPDATE order_line_items
+              SET originating_order_id = COALESCE(originating_order_id, order_id),
+                  order_id = @ClaimingOrderId,
+                  availability_status = 'pending_sale',
+                  updated_at = SYSUTCDATETIME()
+              WHERE id = @Id AND availability_status = 'available'",
+            new { Id = lineItemId, ClaimingOrderId = claimingOrderId }, transaction);
+
+        if (claimed == 0)
+        {
+            throw new AppException(StatusCodes.Status409Conflict, "ITEM_NOT_AVAILABLE",
+                $"'{item.ItemName}' is no longer available — it has already been claimed or sold");
+        }
+
+        // Recorded in the item's own history so the claim is visible in the audit trail.
+        // Production status does not change, so from and to are the same; the note is
+        // what carries the meaning.
+        await connection.ExecuteAsync(
+            @"INSERT INTO line_item_status_history (line_item_id, from_status, to_status, user_id, notes)
+              VALUES (@LineItemId, @Status, @Status, @UserId, @Notes)",
+            new
+            {
+                LineItemId = lineItemId,
+                Status = item.CurrentStatus,
+                UserId = caller.UserId,
+                Notes = $"Claimed from stock into order {claimingOrderNumber}",
+            },
+            transaction);
     }
 }

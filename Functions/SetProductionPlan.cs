@@ -19,7 +19,7 @@ public class SetProductionPlan(
 {
     public record ProductionPlanRequest(string Method, List<string>? Steps);
 
-    private record LineItemRow(Guid Id, Guid OrderId, string CurrentStatus);
+    private record LineItemRow(Guid Id, Guid OrderId, string CurrentStatus, string? Method);
 
     private static readonly string[] ValidMethods = ["factory", "outsource", "import"];
 
@@ -78,7 +78,8 @@ public class SetProductionPlan(
         await connection.OpenAsync();
 
         var item = await connection.QuerySingleOrDefaultAsync<LineItemRow>(
-            "SELECT id AS Id, order_id AS OrderId, current_status AS CurrentStatus FROM order_line_items WHERE id = @Id",
+            @"SELECT id AS Id, order_id AS OrderId, current_status AS CurrentStatus, method AS Method
+              FROM order_line_items WHERE id = @Id",
             new { Id = id });
 
         if (item is null)
@@ -86,37 +87,57 @@ public class SetProductionPlan(
             throw new AppException(StatusCodes.Status404NotFound, "NOT_FOUND", $"Line item {id} not found");
         }
 
-        // Re-planning is allowed while nothing has been worked on yet. Once a step has
-        // started, changing the plan would orphan recorded work and photos, so it is
-        // refused rather than silently discarding them.
-        var workStarted = await connection.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM order_line_item_steps WHERE line_item_id = @Id AND status <> 'pending'",
-            new { Id = id });
+        // A plan in progress may be ADDED to but not cut back. This matters for a
+        // claimed semi-finished item: it arrives with completed steps and needs its
+        // remaining ones planned under the new order. Removing or resetting work that
+        // has already happened is still refused — that is what the original lock was
+        // protecting, and it still holds.
+        var existing = (await connection.QueryAsync<ExistingStep>(
+            @"SELECT step_name AS StepName, sequence AS Sequence, status AS Status
+              FROM order_line_item_steps WHERE line_item_id = @Id ORDER BY sequence",
+            new { Id = id })).ToList();
 
-        if (workStarted > 0)
+        var change = ProductionPlanChange.Evaluate(existing, canonicalSteps);
+        if (!change.IsAllowed)
         {
+            throw new AppException(StatusCodes.Status409Conflict, "PLAN_LOCKED", change.Message!);
+        }
+
+        var requestedMethod = body.Method.ToLowerInvariant();
+        if (!ProductionPlanChange.CanChangeMethod(existing) &&
+            !string.Equals(item.Method, requestedMethod, StringComparison.OrdinalIgnoreCase))
+        {
+            // The recorded steps were performed under the old method; switching now
+            // would leave that history describing a route the item never took.
             throw new AppException(StatusCodes.Status409Conflict, "PLAN_LOCKED",
-                "Production has already started on this item — its plan can no longer be changed");
+                $"Production has already started under method '{item.Method}' — it cannot be changed to '{requestedMethod}'");
         }
 
         using var transaction = connection.BeginTransaction();
 
-        await connection.ExecuteAsync(
-            "DELETE FROM order_line_item_steps WHERE line_item_id = @Id",
-            new { Id = id }, transaction);
+        foreach (var stepName in change.StepsToRemove)
+        {
+            await connection.ExecuteAsync(
+                "DELETE FROM order_line_item_steps WHERE line_item_id = @Id AND step_name = @StepName",
+                new { Id = id, StepName = stepName }, transaction);
+        }
 
-        for (var i = 0; i < canonicalSteps.Count; i++)
+        // Appended steps continue the sequence rather than renumbering, so existing
+        // steps keep the position they were worked in.
+        var nextSequence = existing.Count == 0 ? 1 : existing.Max(s => s.Sequence) + 1;
+
+        foreach (var stepName in change.StepsToAdd)
         {
             await connection.ExecuteAsync(
                 @"INSERT INTO order_line_item_steps (line_item_id, step_name, sequence, status)
                   VALUES (@LineItemId, @StepName, @Sequence, 'pending')",
-                new { LineItemId = id, StepName = canonicalSteps[i], Sequence = i + 1 },
+                new { LineItemId = id, StepName = stepName, Sequence = nextSequence++ },
                 transaction);
         }
 
         await connection.ExecuteAsync(
             "UPDATE order_line_items SET method = @Method, updated_at = SYSUTCDATETIME() WHERE id = @Id",
-            new { Id = id, Method = body.Method.ToLowerInvariant() },
+            new { Id = id, Method = requestedMethod },
             transaction);
 
         transaction.Commit();

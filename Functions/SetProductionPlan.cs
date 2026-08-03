@@ -57,10 +57,11 @@ public class SetProductionPlan(
 
         var template = await templateProvider.GetActiveAsync(TemplateKind.ProductionStep);
 
-        // Every requested step must exist in the client's template, and cannot be the
-        // initial lifecycle status.
-        var selectable = template.Statuses
-            .Where(s => !string.Equals(s.Code, template.InitialStatus, StringComparison.OrdinalIgnoreCase))
+        // Every requested step must be a status the template marks selectable. Lifecycle
+        // states (PENDING, WITH_SUPPLIER, SEMI_FINISHED, FINISHED) are set by the system
+        // — planning one as a step would create a meaningless work item a supervisor
+        // could then mark complete.
+        var selectable = template.SelectableSteps
             .ToDictionary(s => s.Code, s => s.Code, StringComparer.OrdinalIgnoreCase);
 
         var canonicalSteps = new List<string>();

@@ -20,10 +20,10 @@ public class GetProductionStepsTemplate(JwtService jwtService, ITemplateProvider
 
         var template = await templateProvider.GetActiveAsync(TemplateKind.ProductionStep);
 
-        // The initial status is a lifecycle marker, not a factory step anyone performs,
-        // so it is excluded from the checklist the supervisor picks from.
-        var steps = template.Statuses
-            .Where(s => !string.Equals(s.Code, template.InitialStatus, StringComparison.OrdinalIgnoreCase))
+        // Only genuine units of work. PENDING, WITH_SUPPLIER, SEMI_FINISHED and FINISHED
+        // are lifecycle states the system sets — offering them on the checklist would let
+        // a supervisor plan "With Supplier" as though it were carpentry.
+        var steps = template.SelectableSteps
             .Select(s => new { code = s.Code, name = s.Name })
             .ToList();
 

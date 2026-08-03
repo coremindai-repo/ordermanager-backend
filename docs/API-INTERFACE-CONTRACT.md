@@ -419,12 +419,48 @@ Same shape as above, scoped to a single line item, validated against
 whichever sub-flow the item is currently in (factory production steps,
 outsourcing/import, post-production).
 
+**Valid `targetStatus` values for a line item** — this is a different vocabulary from
+the order statuses above:
+
+| Status | Set by |
+|---|---|
+| `PENDING` | Where every line item starts |
+| `WITH_SUPPLIER` | The outsourcing flow, when a request is placed |
+| `SEMI_FINISHED` | The outsourcing flow, on `received_semi_finished` (outsource only) |
+| `CARPENTRY`, `POLISHING`, `UPHOLSTERY` | A factory supervisor, via this endpoint |
+| `FINISHED` | A factory supervisor, via this endpoint — the only terminal status |
+
+The work steps are exactly what `GET /api/production-steps-template` returns; the
+lifecycle statuses are set for you and are not on that list. Which moves are legal
+depends on the item's `method` — see §6 for the outsource/import paths.
+
 ## 5. Factory production
 
 ### GET /api/production-steps-template
-Returns the client's configured list of production stages (e.g. Carpentry,
-Polishing, Upholstery, Finished) — drives the "This item will require"
-checklist on Screen 2.
+Returns the client's configured production steps — drives the "This item will require"
+checklist, and is the source of the values sent to `POST .../production-plan`.
+
+Response `200`:
+```json
+{
+  "initialStatus": "PENDING",
+  "steps": [
+    { "code": "CARPENTRY", "name": "Carpentry" },
+    { "code": "POLISHING", "name": "Polishing" },
+    { "code": "UPHOLSTERY", "name": "Upholstery" }
+  ]
+}
+```
+- **Send `code`, not `name`,** in the production plan's `steps` array. `name` is the
+  display label.
+- `steps` contains **only genuine units of factory work.** Lifecycle statuses —
+  `PENDING`, `WITH_SUPPLIER`, `SEMI_FINISHED`, `FINISHED` — are deliberately absent: the
+  system sets those (the outsourcing flow sets the supplier ones, a line-item transition
+  sets `FINISHED`), and planning one as a step would create a work item nobody performs.
+  Render the array as-is; it needs no filtering.
+- `initialStatus` is where a line item starts and is **not** selectable.
+- The list is client configuration and can change between deployments, so build the
+  checklist from this response rather than hard-coding step names.
 
 ### POST /api/order-line-items/{lineItemId}/production-plan
 Body: `{ "method": "factory | outsource | import", "steps": ["CARPENTRY","POLISHING"] }`

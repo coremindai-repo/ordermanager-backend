@@ -7,6 +7,21 @@ public sealed record StatusDefinition
 {
     public required string Code { get; init; }
     public required string Name { get; init; }
+
+    /// <summary>
+    /// Whether a supervisor may choose this as a production step on the "this item will
+    /// require" checklist. Only meaningful on production step templates.
+    ///
+    /// Most statuses are NOT selectable: PENDING, WITH_SUPPLIER, SEMI_FINISHED and
+    /// FINISHED are lifecycle states the system sets — WITH_SUPPLIER and SEMI_FINISHED
+    /// come from the outsourcing flow, FINISHED from a line-item transition. Only the
+    /// genuine units of factory work are selectable.
+    ///
+    /// Defaults to FALSE deliberately. A template that forgets the flag yields an empty
+    /// checklist — visibly broken — rather than silently offering lifecycle statuses as
+    /// if they were work.
+    /// </summary>
+    public bool SelectableAsStep { get; init; }
 }
 
 /// <summary>
@@ -88,6 +103,13 @@ public sealed record WorkflowTemplate
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
+
+    /// <summary>
+    /// The statuses a supervisor may actually pick as production steps — the "this item
+    /// will require" checklist, and the only values accepted by the production plan.
+    /// </summary>
+    public IReadOnlyList<StatusDefinition> SelectableSteps =>
+        Statuses.Where(s => s.SelectableAsStep).ToList();
 
     /// <summary>
     /// Statuses with no outgoing transition — the end of the line. Derived from the

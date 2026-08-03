@@ -167,6 +167,18 @@ salesperson, showroom, timestamps. Response `200` — same shape returned by
       "currentStatus": "string",
       "method": "factory | outsource | import | null",
       "currentStep": "string|null",
+      "productionSteps": [
+        {
+          "stepId": "guid",
+          "stepName": "CARPENTRY",
+          "sequence": 1,
+          "status": "pending | started | complete",
+          "assignedNames": ["string"],
+          "photos": [ { "blobPath": "string", "url": "https://…?<read SAS>" } ],
+          "startedAt": "2026-08-04T09:12:44.1230000Z",
+          "completedAt": null
+        }
+      ],
       "availabilityStatus": "available | pending_sale | sold | null",
       "originatingOrderId": "guid|null",
       "originatingOrderNumber": "string|null",
@@ -181,6 +193,17 @@ salesperson, showroom, timestamps. Response `200` — same shape returned by
 }
 ```
 `404` if the order does not exist.
+
+**`productionSteps` is where step IDs come from.** Every endpoint taking a `{stepId}` in
+its URL — the step update and the step photo upload — needs a value from here.
+
+⚠ **`currentStep` is not a step reference.** It is a display string mirroring the item's
+current production status, and it is `null` until the item starts moving. It cannot be
+used to address a step. Read `productionSteps[].stepId` instead.
+
+`productionSteps` is empty until a production plan is set. It is ordered by `sequence`,
+which is the order the steps were planned in — appended steps continue the sequence
+rather than renumbering, so a completed step keeps the position it was worked in.
 
 **`dimensions` is always in centimetres**, whatever unit was entered — so values are
 directly comparable without conversion. `enteredUnit` records what the salesperson
@@ -404,8 +427,38 @@ Polishing, Upholstery, Finished) — drives the "This item will require"
 checklist on Screen 2.
 
 ### POST /api/order-line-items/{lineItemId}/production-plan
-Body: `{ "method": "factory | outsource | import", "steps": ["carpentry","polishing"] }`
+Body: `{ "method": "factory | outsource | import", "steps": ["CARPENTRY","POLISHING"] }`
 Sets the chosen path and step list for one item.
+
+Step names come from `GET /api/production-steps-template` and are matched
+case-insensitively; the response echoes the template's own casing.
+
+**Response `200` — this is where step IDs are created and first returned:**
+```json
+{
+  "lineItemId": "guid",
+  "method": "factory",
+  "steps": [
+    { "stepId": "guid", "stepName": "CARPENTRY", "sequence": 1, "status": "pending" },
+    { "stepId": "guid", "stepName": "POLISHING", "sequence": 2, "status": "pending" }
+  ]
+}
+```
+
+**Getting from a line item to a `stepId`** — every step-scoped endpoint needs one, and
+there are two ways to obtain it:
+
+| When | Read from |
+|---|---|
+| Immediately after planning | this response's `steps[].stepId` |
+| Any time later | `GET /api/orders/{orderId}` → `lineItems[].productionSteps[].stepId` |
+
+Both carry the same ids. `GET /api/orders/{orderId}` is the durable source — the plan
+response is a convenience so the app need not re-fetch the order straight after planning.
+There is no separate "list steps" endpoint; the order detail is it.
+
+The `steps` array returned here reflects the item's **whole** plan, not just what this
+call changed — so it is safe to render directly after an append.
 
 **A plan already in progress may be added to, but not cut back.** This is how a claimed
 semi-finished item gets its remaining steps: send the full intended step list, and any

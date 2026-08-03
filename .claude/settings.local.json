@@ -89,7 +89,9 @@
       "Bash(git -C /c/Users/manoj/Projects/ordermanagement-mobile diff --stat)",
       "Bash(git mv *)",
       "Bash(mv tests/OrderManager.Backend.Tests/ProductionTemplateV2Tests.cs tests/OrderManager.Backend.Tests/ProductionTemplateV3Tests.cs)",
-      "Bash(xargs -n1 basename)"
+      "Bash(xargs -n1 basename)",
+      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P 'JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1!' -I -l 90 -i 022_raw_material_request_line_item.sql)",
+      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -h -1 -W -Q 'SET NOCOUNT ON; *)"
     ]
   }
 }

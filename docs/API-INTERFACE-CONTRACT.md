@@ -197,9 +197,16 @@ salesperson, showroom, timestamps. Response `200` — same shape returned by
 **`productionSteps` is where step IDs come from.** Every endpoint taking a `{stepId}` in
 its URL — the step update and the step photo upload — needs a value from here.
 
-⚠ **`currentStep` is not a step reference.** It is a display string mirroring the item's
-current production status, and it is `null` until the item starts moving. It cannot be
-used to address a step. Read `productionSteps[].stepId` instead.
+⚠ **`currentStep` is not a step reference, and it is not new information.** It is a
+display string that **mirrors `currentStatus` exactly** — the server writes both to the
+same value on every transition, and they cannot diverge. It is `null` until the item
+starts moving. It cannot be used to address a step; read `productionSteps[].stepId`
+instead.
+
+`currentStep` is retained for compatibility only. **Read `currentStatus` for anything
+new**, and prefer it when changing existing code — one field should be the source of
+truth rather than two that happen to agree. Filters take `status`, never `currentStep`
+(see `GET /api/order-line-items` in §5).
 
 `productionSteps` is empty until a production plan is set. It is ordered by `sequence`,
 which is the order the steps were planned in — appended steps continue the sequence
@@ -436,6 +443,91 @@ depends on the item's `method` — see §6 for the outsource/import paths.
 
 ## 5. Factory production
 
+### GET /api/order-line-items
+Every line item currently at a given production step, **across all orders** — the
+factory supervisor's work queue. Use this for the "New Items" / per-step dashboards;
+`GET /api/orders/{orderId}` remains the way to read one order's items in context.
+
+Query params, all optional and combinable:
+
+| Param | Meaning |
+|---|---|
+| `status` | A production status code from `GET /api/production-steps-template`, e.g. `CARPENTRY`. Any casing; validated against the active template |
+| `method` | `factory` \| `outsource` \| `import` |
+| `orderId` | Restrict to one order |
+| `mine` | `true` — only items on orders the caller raised |
+| `limit` | 1–500, default 100 |
+
+⚠ **Filter on `status`, not `currentStep`.** `status` matches the line item's
+`currentStatus`. `currentStep` mirrors it exactly and exists only for compatibility
+(see §4) — there is no `currentStep` query param.
+
+An unrecognised `status` returns `400` listing the template's real status codes, rather
+than an empty list — an empty list would read as "no work at this step".
+
+Response `200`:
+```json
+{
+  "lineItems": [
+    {
+      "lineItemId": "guid",
+      "itemName": "string",
+      "description": "string|null",
+      "currentStatus": "CARPENTRY",
+      "currentStep": "CARPENTRY",
+      "method": "factory|outsource|import|null",
+      "availabilityStatus": "available|pending_sale|sold|null",
+      "finish": "string|null",
+      "dimensions": { "lengthCm": 0, "breadthCm": 0, "heightCm": 0, "enteredUnit": "cm" },
+      "order": {
+        "orderId": "guid",
+        "orderNumber": "CUS-2026-0001",
+        "orderType": "customer|stock",
+        "currentStatus": "IN_PRODUCTION",
+        "storeName": "string|null",
+        "salespersonName": "string"
+      },
+      "referencePhotos": [ { "blobPath": "string", "url": "https://…" } ],
+      "productionSteps": [
+        {
+          "stepId": "guid",
+          "stepName": "CARPENTRY",
+          "sequence": 1,
+          "status": "pending|started|complete",
+          "assignedNames": ["string"],
+          "startedAt": "…Z|null",
+          "completedAt": "…Z|null"
+        }
+      ],
+      "createdAt": "2026-08-04T09:00:00.0000000Z",
+      "updatedAt": "2026-08-04T09:00:00.0000000Z"
+    }
+  ],
+  "count": 1,
+  "limit": 100,
+  "truncated": false
+}
+```
+
+- **`productionSteps` is carried inline**, so a step can be acted on straight from the
+  list without fetching each parent order for its `stepId`s. Same shape as §4's, with
+  one omission: step **photos are not included** — there can be many per item and they
+  are only wanted on the step screen, which loads the order detail anyway.
+- **`referencePhotos` are** included; the supervisor identifies an item by sight. Read
+  URLs are short-lived, as everywhere else.
+- **`order`** carries enough context to act — which order, whose, and where it is going —
+  without a second call per row.
+- **Ordering is oldest-first** (`createdAt` ascending). This is a work queue: the item
+  waiting longest should be at the top, not buried.
+- **`truncated`** is `true` when more items match than were returned. Because of the
+  ordering, what gets dropped is the newest arrivals, never the longest waits. Narrow
+  with `status`/`method` or raise `limit` rather than assuming a full page is the whole
+  queue.
+
+**Visibility** follows §3 exactly, and is the same rule as `GET /api/orders`: an item is
+visible when its order is. `factory_supervisor`, `store_manager` and `company_manager`
+see the whole queue; a plain salesperson sees only items on orders they raised.
+
 ### GET /api/production-steps-template
 Returns the client's configured production steps — drives the "This item will require"
 checklist, and is the source of the values sent to `POST .../production-plan`.
@@ -628,12 +720,39 @@ the only status that is actually reachable next. Responses carry `nextStatus` (n
 the end of the chain) so the app can render the next action without hard-coding the
 sequence.
 
-### GET /api/raw-material-requests
-Query param: `status` (any of the five above).
+### A request may be raised against a line item
 
-Callers holding `store_manager` or `company_manager` see all requests; anyone else
-sees only the requests they raised themselves (contract §3 — factory supervisors see
-"raw-material requests they raise").
+A raw material request can optionally name the line item whose production is waiting on
+it, via `lineItemId`. This is how the supervisor's per-item screen shows "materials on
+order" against the item it belongs to.
+
+The link is **optional and purely informational**:
+
+- **It is not a gate.** An unreceived request does **not** block a production step. The
+  supervisor moves steps by hand and already decides whether materials are on hand — the
+  app records that judgment, it does not enforce it.
+- **A request without `lineItemId` behaves exactly as before.** Stock-level requests
+  raised by a store manager belong to no item and are unaffected by everything here.
+- **The store manager's procurement flow is unchanged.** Their list is not filtered by
+  the link; item-linked and standalone requests appear together, and the status chain is
+  identical for both.
+
+### GET /api/raw-material-requests
+Query params: `status` (any of the five above), `lineItemId` (guid).
+
+**Visibility** — a request is visible when any of these hold:
+
+| Caller | Sees |
+|---|---|
+| `store_manager`, `company_manager` | Every request. Procurement is their job |
+| Anyone | Requests they raised themselves |
+| Anyone | Item-linked requests on an order they can access |
+
+The third row is what the link changes. A request naming a line item describes that
+**item**, so it follows the item rather than its raiser: a second supervisor picking the
+item up can see materials are already on order instead of raising a duplicate. A
+standalone request still stays with whoever raised it (contract §3 — factory supervisors
+see "raw-material requests they raise").
 
 Response `200`:
 ```json
@@ -646,6 +765,13 @@ Response `200`:
       "nextStatus": "sent_to_supplier",
       "supplier": { } ,
       "notes": "string|null",
+      "lineItem": {
+        "lineItemId": "guid",
+        "itemName": "string",
+        "currentStatus": "CARPENTRY",
+        "orderId": "guid",
+        "orderNumber": "CUS-2026-0001"
+      },
       "requestedBy": { "userId": "guid", "name": "string" },
       "createdAt": "2026-08-02T11:20:00.0000000Z",
       "updatedAt": "2026-08-02T11:20:00.0000000Z"
@@ -654,16 +780,30 @@ Response `200`:
   "count": 1
 }
 ```
+`lineItem` is **`null`** for a standalone stock-level request. When present it carries
+enough context to render the request against its item without a second call.
 
 ### POST /api/raw-material-requests
 ```json
-{ "items": [ { } ], "supplier": { }, "notes": "string|null" }
+{ "items": [ { } ], "supplier": { }, "notes": "string|null", "lineItemId": "guid|null" }
 ```
 `items` is required and must be a non-empty JSON array or object. Like `materials`
 elsewhere, `items` and `supplier` are free-form for now — the field lists come from
 screens that have not been shared yet.
 
-Response `201`: `{ "requestId": "guid", "status": "requested", "nextStatus": "sent_to_supplier" }`
+`lineItemId` is optional. When supplied it must exist (`404` otherwise) and the caller
+must be able to access that item's order (`403` otherwise) — a request cannot be
+attached to work the caller has no visibility of.
+
+Response `201`:
+```json
+{
+  "requestId": "guid",
+  "status": "requested",
+  "nextStatus": "sent_to_supplier",
+  "lineItemId": "guid|null"
+}
+```
 
 ### POST /api/raw-material-requests/{id}/status
 ```json

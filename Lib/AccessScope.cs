@@ -51,6 +51,42 @@ public static class AccessScope
         IReadOnlyCollection<string> roles, Guid callerUserId, Guid orderCreatedBy) =>
         CanViewAllOrders(roles) || callerUserId == orderCreatedBy;
 
+    /// <summary>
+    /// Whether a raw-material request is visible to this caller.
+    ///
+    /// A request can be raised two ways, and they scope differently:
+    ///   - Tied to a line item, it describes that ITEM, so it follows the item —
+    ///     anyone who can access the item's order sees it. That is the point: a second
+    ///     supervisor picking the item up can tell materials are already on order
+    ///     instead of raising a duplicate.
+    ///   - Standalone (stock-level), it stays with whoever raised it, unchanged from
+    ///     before this existed.
+    /// Procurement roles see everything either way; procuring is their job.
+    ///
+    /// <paramref name="linkedOrderCreatedBy"/> is null when the request names no line
+    /// item. RawMaterialRequests.List transcribes this rule into its WHERE clause so the
+    /// database does the filtering — change one and you must change the other.
+    /// </summary>
+    public static bool CanViewRawMaterialRequest(
+        IReadOnlyCollection<string> roles,
+        Guid callerUserId,
+        Guid requestedBy,
+        Guid? linkedOrderCreatedBy)
+    {
+        if (CanViewAllProcurement(roles))
+        {
+            return true;
+        }
+
+        if (callerUserId == requestedBy)
+        {
+            return true;
+        }
+
+        return linkedOrderCreatedBy is Guid orderCreatedBy
+            && CanAccessOrder(roles, callerUserId, orderCreatedBy);
+    }
+
     private static bool HasAny(IReadOnlyCollection<string> roles, string[] permitted) =>
         roles.Any(r => permitted.Contains(r, StringComparer.OrdinalIgnoreCase));
 }

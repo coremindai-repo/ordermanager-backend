@@ -99,6 +99,82 @@ public class AccessScopeTests
         Assert.False(AccessScope.RestrictOrdersToOwn(["store_manager"], requestedMine: false));
     }
 
+    // ---------- Raw material requests: standalone vs tied to a line item ----------
+    //
+    // A request raised against a line item describes that ITEM, so it follows the item
+    // rather than its raiser: a second supervisor picking the item up must be able to see
+    // materials are already on order instead of duplicating the request. A standalone
+    // stock-level request keeps the original raiser-scoped rule untouched.
+
+    private static readonly Guid Caller = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid SomeoneElse = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+    [Theory]
+    [InlineData("store_manager")]
+    [InlineData("company_manager")]
+    public void ProcurementSeesEveryRequestLinkedOrNot(string role)
+    {
+        Assert.True(AccessScope.CanViewRawMaterialRequest(
+            [role], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: null));
+        Assert.True(AccessScope.CanViewRawMaterialRequest(
+            [role], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: SomeoneElse));
+    }
+
+    [Fact]
+    public void ARaiserAlwaysSeesTheirOwnRequest()
+    {
+        Assert.True(AccessScope.CanViewRawMaterialRequest(
+            ["factory_supervisor"], Caller, requestedBy: Caller, linkedOrderCreatedBy: null));
+    }
+
+    [Fact]
+    public void AStandaloneRequestStaysWithItsRaiser()
+    {
+        // The pre-existing rule, pinned so the new item-linked branch cannot widen it:
+        // one supervisor still cannot see another's stock-level request.
+        Assert.False(AccessScope.CanViewRawMaterialRequest(
+            ["factory_supervisor"], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: null));
+    }
+
+    [Fact]
+    public void AnItemLinkedRequestIsVisibleToAnyoneWhoCanSeeTheItem()
+    {
+        // The change: a supervisor sees all orders, so they see a colleague's request
+        // once it names a line item — even though the identical standalone request above
+        // is hidden from them.
+        Assert.True(AccessScope.CanViewRawMaterialRequest(
+            ["factory_supervisor"], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: SomeoneElse));
+    }
+
+    [Fact]
+    public void ASalespersonSeesALinkedRequestOnlyOnTheirOwnOrder()
+    {
+        Assert.True(AccessScope.CanViewRawMaterialRequest(
+            ["salesperson"], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: Caller));
+
+        Assert.False(AccessScope.CanViewRawMaterialRequest(
+            ["salesperson"], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: SomeoneElse));
+    }
+
+    [Fact]
+    public void ARaiserKeepsVisibilityEvenWhenLinkedToAnOrderTheyCannotSee()
+    {
+        // Linking must only ever widen visibility. Whoever raised a request can always
+        // still see it, whatever order it was attached to.
+        Assert.True(AccessScope.CanViewRawMaterialRequest(
+            ["salesperson"], Caller, requestedBy: Caller, linkedOrderCreatedBy: SomeoneElse));
+    }
+
+    [Fact]
+    public void ACallerWithNoRolesSeesOnlyRequestsTheyRaised()
+    {
+        // Fail closed. A null link must not become a wildcard.
+        Assert.False(AccessScope.CanViewRawMaterialRequest(
+            [], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: null));
+        Assert.False(AccessScope.CanViewRawMaterialRequest(
+            [], Caller, requestedBy: SomeoneElse, linkedOrderCreatedBy: SomeoneElse));
+    }
+
     // ---------- Case handling ----------
 
     [Fact]

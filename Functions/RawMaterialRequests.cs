@@ -22,11 +22,13 @@ public class RawMaterialRequests(
     INotificationService notifications,
     ILogger<RawMaterialRequests> logger)
 {
-    public record CreateRequest(JsonElement? Items, JsonElement? Supplier, string? Notes);
+    public record CreateRequest(JsonElement? Items, JsonElement? Supplier, string? Notes, Guid? LineItemId);
 
     public record StatusUpdateRequest(string Status, JsonElement? Supplier, string? Notes);
 
     private record RequestRow(Guid Id, string Status);
+
+    private record LineItemContext(Guid LineItemId, Guid OrderId, Guid OrderCreatedBy);
 
     // ---------- GET /api/raw-material-requests ----------
 
@@ -43,24 +45,54 @@ public class RawMaterialRequests(
                 $"status must be one of: {string.Join(", ", RawMaterialStatusFlow.Ordered)}");
         }
 
-        // A factory supervisor sees the requests they raised (contract §3); store
-        // managers and company managers procure, so they see everything.
-        var restrictToOwn = !AccessScope.CanViewAllProcurement(caller.Roles);
+        Guid? lineItemFilter = null;
+        var lineItemIdParam = req.Query["lineItemId"].FirstOrDefault();
+        if (lineItemIdParam is not null)
+        {
+            if (!Guid.TryParse(lineItemIdParam, out var parsed))
+            {
+                throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
+                    "lineItemId must be a GUID");
+            }
+            lineItemFilter = parsed;
+        }
+
+        // Transcription of AccessScope.CanViewRawMaterialRequest — that method states the
+        // rule and carries the tests; this pushes it into the query so the database never
+        // hands back a row the caller may not see. Change one, change both.
+        //
+        // Procurement roles skip the whole clause. Everyone else sees requests they
+        // raised, plus item-linked requests on orders they can access — an item-linked
+        // request describes the item, so it follows the item rather than its raiser.
+        var seesAllProcurement = AccessScope.CanViewAllProcurement(caller.Roles);
+        var seesAllOrders = AccessScope.CanViewAllOrders(caller.Roles);
 
         using var connection = connectionFactory.CreateConnection();
 
         var rows = await connection.QueryAsync(
             @"SELECT r.id, r.items, r.status, r.supplier, r.notes, r.created_at, r.updated_at,
-                     u.id AS requested_by_id, u.first_name, u.last_name
+                     u.id AS requested_by_id, u.first_name, u.last_name,
+                     li.id AS line_item_id, li.item_name, li.current_status AS line_item_status,
+                     o.id AS order_id, o.order_number
               FROM raw_material_requests r
               JOIN users u ON u.id = r.requested_by
+              LEFT JOIN order_line_items li ON li.id = r.line_item_id
+              LEFT JOIN orders o ON o.id = li.order_id
               WHERE (@Status IS NULL OR r.status = @Status)
-                AND (@RestrictToOwn = 0 OR r.requested_by = @UserId)
+                AND (@LineItemId IS NULL OR r.line_item_id = @LineItemId)
+                AND (
+                    @SeesAllProcurement = 1
+                    OR r.requested_by = @UserId
+                    OR (r.line_item_id IS NOT NULL
+                        AND (@SeesAllOrders = 1 OR o.created_by = @UserId))
+                )
               ORDER BY r.created_at DESC",
             new
             {
                 Status = status is null ? null : RawMaterialStatusFlow.Canonical(status),
-                RestrictToOwn = restrictToOwn ? 1 : 0,
+                LineItemId = lineItemFilter,
+                SeesAllProcurement = seesAllProcurement ? 1 : 0,
+                SeesAllOrders = seesAllOrders ? 1 : 0,
                 UserId = caller.UserId,
             });
 
@@ -72,6 +104,18 @@ public class RawMaterialRequests(
             nextStatus = RawMaterialStatusFlow.Next((string)r.status),
             supplier = ParseJson((string?)r.supplier),
             notes = (string?)r.notes,
+            // Null for a stock-level request that belongs to no particular item. Present
+            // when a supervisor raised it against the item whose production is waiting.
+            lineItem = r.line_item_id is null
+                ? null
+                : new
+                {
+                    lineItemId = (Guid)r.line_item_id,
+                    itemName = (string)r.item_name,
+                    currentStatus = (string)r.line_item_status,
+                    orderId = (Guid)r.order_id,
+                    orderNumber = (string)r.order_number,
+                },
             requestedBy = new
             {
                 userId = (Guid)r.requested_by_id,
@@ -109,11 +153,38 @@ public class RawMaterialRequests(
 
         using var connection = connectionFactory.CreateConnection();
         await connection.OpenAsync();
+
+        // lineItemId is optional — a store manager's stock-level request names no item.
+        // When it IS given, the caller must be allowed to see that item's order, or a
+        // request could be attached to work they have no visibility of (and would then
+        // become visible to them through the item-linked branch of the read rule).
+        if (body.LineItemId is Guid lineItemId)
+        {
+            var context = await connection.QuerySingleOrDefaultAsync<LineItemContext>(
+                @"SELECT li.id AS LineItemId, o.id AS OrderId, o.created_by AS OrderCreatedBy
+                  FROM order_line_items li
+                  JOIN orders o ON o.id = li.order_id
+                  WHERE li.id = @Id",
+                new { Id = lineItemId });
+
+            if (context is null)
+            {
+                throw new AppException(StatusCodes.Status404NotFound, "NOT_FOUND",
+                    $"Line item {lineItemId} not found");
+            }
+
+            if (!AccessScope.CanAccessOrder(caller.Roles, caller.UserId, context.OrderCreatedBy))
+            {
+                throw new AppException(StatusCodes.Status403Forbidden, "FORBIDDEN",
+                    "You do not have access to that line item");
+            }
+        }
+
         using var transaction = connection.BeginTransaction();
 
         await connection.ExecuteAsync(
-            @"INSERT INTO raw_material_requests (id, requested_by, items, status, supplier, notes)
-              VALUES (@Id, @RequestedBy, @Items, @Status, @Supplier, @Notes)",
+            @"INSERT INTO raw_material_requests (id, requested_by, items, status, supplier, notes, line_item_id)
+              VALUES (@Id, @RequestedBy, @Items, @Status, @Supplier, @Notes, @LineItemId)",
             new
             {
                 Id = id,
@@ -122,6 +193,7 @@ public class RawMaterialRequests(
                 Status = RawMaterialStatusFlow.Initial,
                 Supplier = body.Supplier?.GetRawText(),
                 body.Notes,
+                body.LineItemId,
             },
             transaction);
 
@@ -138,6 +210,7 @@ public class RawMaterialRequests(
             requestId = id,
             status = RawMaterialStatusFlow.Initial,
             nextStatus = RawMaterialStatusFlow.Next(RawMaterialStatusFlow.Initial),
+            lineItemId = body.LineItemId,
         })
         { StatusCode = StatusCodes.Status201Created };
     }

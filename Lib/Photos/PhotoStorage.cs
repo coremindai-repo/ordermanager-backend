@@ -14,6 +14,12 @@ public interface IPhotoStorage
     /// <summary>Issues a narrowly-scoped, write-only, short-lived SAS for one new blob.</summary>
     PhotoUploadTarget CreateUploadTarget(Guid orderId, Guid lineItemId, Guid stepId, string fileExtension);
 
+    /// <summary>
+    /// The same, for a line item's reference photo — captured at item entry, before any
+    /// production step exists. Identical scoping and lifetime; only the path differs.
+    /// </summary>
+    PhotoUploadTarget CreateReferenceUploadTarget(Guid orderId, Guid lineItemId, string fileExtension);
+
     /// <summary>Mints a fresh short-lived read URL for a stored blob path.</summary>
     string CreateReadUrl(string blobPath);
 
@@ -93,6 +99,18 @@ public sealed class PhotoStorage : IPhotoStorage
         var expiresAt = DateTimeOffset.UtcNow.Add(UploadWindow);
 
         // Create + Write only: enough to PUT one new blob, nothing else.
+        var url = BuildSasUri(blobPath, BlobSasPermissions.Create | BlobSasPermissions.Write, expiresAt);
+
+        return new PhotoUploadTarget(blobPath, url, expiresAt);
+    }
+
+    public PhotoUploadTarget CreateReferenceUploadTarget(Guid orderId, Guid lineItemId, string fileExtension)
+    {
+        var extension = NormaliseExtension(fileExtension);
+        // "reference" in place of the step id — see PhotoPathValidator.ReferenceSegment.
+        var blobPath = $"{orderId}/{lineItemId}/{PhotoPathValidator.ReferenceSegment}/{Guid.NewGuid()}{extension}";
+        var expiresAt = DateTimeOffset.UtcNow.Add(UploadWindow);
+
         var url = BuildSasUri(blobPath, BlobSasPermissions.Create | BlobSasPermissions.Write, expiresAt);
 
         return new PhotoUploadTarget(blobPath, url, expiresAt);

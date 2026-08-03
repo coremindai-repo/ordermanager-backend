@@ -33,12 +33,16 @@ public class CreateOrder(
     /// Either a new item to manufacture (ItemName + optional Method/Materials), or a
     /// claim on an existing inventory item (ClaimLineItemId alone).
     /// </summary>
+    public record DimensionsRequest(decimal? Length, decimal? Breadth, decimal? Height, string? Unit);
+
     public record CreateLineItemRequest(
         string? ItemName,
         string? Description,
         string? Method,
         List<JsonElement>? Materials,
-        Guid? ClaimLineItemId)
+        Guid? ClaimLineItemId,
+        string? Finish,
+        DimensionsRequest? Dimensions)
     {
         public bool IsClaim => ClaimLineItemId is not null;
     }
@@ -243,10 +247,20 @@ public class CreateOrder(
             }
 
             var lineItemId = Guid.NewGuid();
+            var dimensions = LineItemDimensions.Normalise(
+                item.Dimensions is null
+                    ? null
+                    : new DimensionsInput(
+                        item.Dimensions.Length, item.Dimensions.Breadth,
+                        item.Dimensions.Height, item.Dimensions.Unit));
 
             await connection.ExecuteAsync(
-                @"INSERT INTO order_line_items (id, order_id, item_name, description, current_status, method, availability_status)
-                  VALUES (@Id, @OrderId, @ItemName, @Description, @Status, @Method, @Availability)",
+                @"INSERT INTO order_line_items
+                    (id, order_id, item_name, description, current_status, method, availability_status,
+                     finish, dimension_length_cm, dimension_breadth_cm, dimension_height_cm, dimension_unit_entered)
+                  VALUES
+                    (@Id, @OrderId, @ItemName, @Description, @Status, @Method, @Availability,
+                     @Finish, @LengthCm, @BreadthCm, @HeightCm, @DimensionUnit)",
                 new
                 {
                     Id = lineItemId,
@@ -255,6 +269,13 @@ public class CreateOrder(
                     item.Description,
                     Status = initialLineItemStatus,
                     Method = item.Method?.ToLowerInvariant(),
+                    item.Finish,
+                    // Converted here, once, so the stored value is always centimetres —
+                    // see Lib/Orders/LineItemDimensions.cs.
+                    LengthCm = dimensions.Length,
+                    BreadthCm = dimensions.Breadth,
+                    HeightCm = dimensions.Height,
+                    DimensionUnit = dimensions.EnteredUnit,
                     // Stock items are inventory from the moment they exist; a customer's
                     // own item never is, so it carries no availability at all.
                     Availability = isCustomerOrder ? null : "available",

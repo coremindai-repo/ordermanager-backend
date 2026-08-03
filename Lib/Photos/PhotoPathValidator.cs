@@ -17,27 +17,51 @@ public static class PhotoPathValidator
     public static readonly string[] AllowedExtensions = [".jpg", ".jpeg", ".png", ".heic", ".webp"];
 
     /// <summary>
+    /// Stands in for the step id in a reference photo's path. Reference photos are
+    /// captured at item entry, before any production step exists.
+    ///
+    /// Deliberately not a GUID: it can therefore never collide with a real step folder,
+    /// and the path keeps its four-segment shape so both validators reason about the
+    /// same structure.
+    /// </summary>
+    public const string ReferenceSegment = "reference";
+
+    /// <summary>
+    /// True only if the path is exactly {orderId}/{lineItemId}/reference/{guid}{ext}.
+    ///
+    /// Separate from <see cref="BelongsTo"/> rather than a loosened version of it —
+    /// widening the step validator to also accept a non-GUID third segment would weaken
+    /// the check guarding step photos in order to serve a different case.
+    /// </summary>
+    public static bool BelongsToLineItemReference(string? blobPath, Guid orderId, Guid lineItemId)
+    {
+        if (!HasSafeShape(blobPath, out var segments))
+        {
+            return false;
+        }
+
+        if (!Guid.TryParse(segments[0], out var pathOrderId) ||
+            !Guid.TryParse(segments[1], out var pathLineItemId))
+        {
+            return false;
+        }
+
+        if (pathOrderId != orderId || pathLineItemId != lineItemId)
+        {
+            return false;
+        }
+
+        return string.Equals(segments[2], ReferenceSegment, StringComparison.Ordinal)
+               && HasValidFileName(segments[3]);
+    }
+
+    /// <summary>
     /// True only if the path is exactly {orderId}/{lineItemId}/{stepId}/{guid}{ext},
     /// with all three ids matching the step being updated.
     /// </summary>
     public static bool BelongsTo(string? blobPath, Guid orderId, Guid lineItemId, Guid stepId)
     {
-        if (string.IsNullOrWhiteSpace(blobPath))
-        {
-            return false;
-        }
-
-        // Reject traversal and absolute/UNC forms before looking at structure.
-        if (blobPath.Contains("..", StringComparison.Ordinal) ||
-            blobPath.Contains('\\', StringComparison.Ordinal) ||
-            blobPath.StartsWith('/') ||
-            blobPath.Contains("://", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var segments = blobPath.Split('/');
-        if (segments.Length != 4)
+        if (!HasSafeShape(blobPath, out var segments))
         {
             return false;
         }
@@ -54,11 +78,42 @@ public static class PhotoPathValidator
             return false;
         }
 
-        // Final segment must be exactly {guid}{allowed extension}, matching what
-        // CreateUploadTarget issues. Validating the extension against the allow-list
-        // (rather than just "has a dot") is what rejects trailing query strings — a
-        // client echoing back the full SAS URL instead of the blobPath, for instance.
-        var fileName = segments[3];
+        return HasValidFileName(segments[3]);
+    }
+
+    /// <summary>
+    /// Traversal and structural checks shared by both validators — rejecting parent
+    /// references, backslashes, absolute and URL forms before any segment is trusted.
+    /// </summary>
+    private static bool HasSafeShape(string? blobPath, out string[] segments)
+    {
+        segments = [];
+
+        if (string.IsNullOrWhiteSpace(blobPath))
+        {
+            return false;
+        }
+
+        if (blobPath.Contains("..", StringComparison.Ordinal) ||
+            blobPath.Contains('\\', StringComparison.Ordinal) ||
+            blobPath.StartsWith('/') ||
+            blobPath.Contains("://", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        segments = blobPath.Split('/');
+        return segments.Length == 4;
+    }
+
+    /// <summary>
+    /// The final segment must be exactly {guid}{allowed extension}, matching what the
+    /// upload targets issue. Validating the extension against the allow-list (rather
+    /// than just "has a dot") is what rejects a trailing query string — a client
+    /// echoing back the full SAS URL instead of the blobPath, for instance.
+    /// </summary>
+    private static bool HasValidFileName(string fileName)
+    {
         var dot = fileName.LastIndexOf('.');
         if (dot <= 0 || dot == fileName.Length - 1)
         {

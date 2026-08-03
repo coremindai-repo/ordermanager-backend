@@ -170,12 +170,26 @@ salesperson, showroom, timestamps. Response `200` — same shape returned by
       "availabilityStatus": "available | pending_sale | sold | null",
       "originatingOrderId": "guid|null",
       "originatingOrderNumber": "string|null",
+      "finish": "string|null",
+      "dimensions": {
+        "lengthCm": 200, "breadthCm": 90, "heightCm": 75, "enteredUnit": "m | cm"
+      },
+      "referencePhotos": [ { "blobPath": "string", "url": "https://…?<read SAS>" } ],
       "materials": [ { } ]
     }
   ]
 }
 ```
 `404` if the order does not exist.
+
+**`dimensions` is always in centimetres**, whatever unit was entered — so values are
+directly comparable without conversion. `enteredUnit` records what the salesperson
+chose, so the app can display `200 cm` back as `2 m` if that is how it was typed.
+`dimensions` is null when none were supplied.
+
+**`referencePhotos`** are the images captured at item entry — see the reference photo
+flow under §5. The factory supervisor's screen reads them from here when choosing
+method and deciding what to build. Read URLs are short-lived, same as step photos.
 
 **On claimed stock items.** `originatingOrderId` / `originatingOrderNumber` are non-null
 only for items claimed from inventory, and name the order that actually **made** the
@@ -213,6 +227,8 @@ Request:
       "itemName": "string",
       "description": "string|null",
       "method": "factory | outsource | import | null",
+      "finish": "string|null",
+      "dimensions": { "length": 2, "breadth": 0.9, "height": 0.75, "unit": "m | cm" },
       "materials": [ { } ]
     },
     { "claimLineItemId": "guid" }
@@ -248,6 +264,28 @@ only needs its remaining steps planned via
 `POST /api/order-line-items/{id}/production-plan` (see §5, which now permits adding
 steps to an item already in progress).
 
+**`finish` and `dimensions` are structured fields, not free text.** They were previously
+being folded into `description` as a formatted string, which cannot be filtered or
+aggregated. `description` remains, for genuine free text only.
+
+> ⚠ **Two corrections for the item-entry screen.**
+>
+> **The axes are Length / Breadth / *Height*, not L/B/W.** "Breadth" and "width" are
+> synonyms, so the original spec left furniture without a real third axis. Field labels
+> should read Length, Breadth, Height.
+>
+> **The unit selector offers metres and centimetres only — not inches.** The `72 x 26 x
+> 18 in` example in the mockup was based on a wrong assumption. `in` and `ft` are
+> rejected with `400`.
+
+- `dimensions.unit` is **required whenever any dimension is supplied**, and vice versa —
+  a measurement with no unit cannot be stored or displayed back (`400`).
+- Individual axes are optional: send only the ones that apply.
+- All values must be greater than zero (`400`).
+- **The backend converts to centimetres; the app must not pre-convert.** Send the value
+  as the salesperson typed it, with the unit they chose. Doing the conversion once
+  server-side means a bug in a released app version cannot permanently corrupt stored
+  measurements.
 - At least one line item is required; every line item requires either `itemName` or
   `claimLineItemId`.
 - `storeId`, if supplied, must be an active store (`400` otherwise).
@@ -405,6 +443,42 @@ Body: `{ "status": "started | complete", "assignedNames": ["string"], "photoUrls
 }
 ```
 
+### Reference photos (line item, captured at item entry)
+
+The salesperson captures a sourced image when entering the item — typically a picture the
+custom piece must match. This is a **production input**: the factory supervisor reads it
+from `GET /api/orders/{orderId}` when choosing factory/outsource/import and deciding what
+to build.
+
+Scoped to the **line item, not a production step**, because no step exists yet. Mobile's
+sequence is:
+
+1. `POST /api/orders` — returns the created order with real `lineItemId`s
+2. `POST /api/order-line-items/{lineItemId}/reference-photo-upload-url` per item
+3. `PUT` the bytes to `uploadUrl` (same `x-ms-blob-type: BlockBlob` header as step photos)
+4. `POST /api/order-line-items/{lineItemId}/reference-photos` to confirm
+
+**Step 1 (SAS)** — request `{ "fileExtension": "jpg" }`, response:
+```json
+{
+  "uploadUrl": "https://<account>.blob.core.windows.net/production-photos/…?<write SAS>",
+  "blobPath": "{orderId}/{lineItemId}/reference/{guid}.jpg",
+  "expiresAt": "2026-08-04T09:12:44.1230000Z",
+  "requiredHeaders": { "x-ms-blob-type": "BlockBlob" }
+}
+```
+
+**Step 4 (confirm)** — `{ "photoUrls": ["<blobPath>"] }`. Confirming a path that was
+never uploaded returns `400`; this is where size, content type and ownership are checked,
+because the backend never sees the bytes. Response returns the item's full
+`referencePhotos` list. Confirming again **adds** rather than replaces.
+
+Scoping and lifetimes are identical to step photos — write-only, single blob, ~10 minutes
+to upload, ~15 minute read URLs, 15MB limit, same extension allow-list.
+
+**Access:** you may attach reference photos to orders you can see — a salesperson to
+their own orders, supervisory roles to any. Otherwise `403`.
+
 ### Photo upload (production step attachments)
 
 Photos go **from the device straight to Azure Blob storage**, not through the API —
@@ -417,6 +491,11 @@ image bytes never pass through a Function. Three steps:
 { "fileExtension": "jpg" }
 ```
 Allowed extensions: `jpg`, `jpeg`, `png`, `heic`, `webp` (anything else → `400`).
+
+**Requires `factory_supervisor`** — step photos are evidence of factory work, so only the
+role that performs step transitions may attach them. Any other role gets `403`. (This
+endpoint was previously open to any authenticated caller; it is now gated consistently
+with every other action.)
 
 Response `200`:
 ```json

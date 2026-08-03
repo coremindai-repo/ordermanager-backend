@@ -40,6 +40,17 @@ public static class AccessScope
     public static bool RestrictOrdersToOwn(IReadOnlyCollection<string> roles, bool requestedMine) =>
         !CanViewAllOrders(roles) || requestedMine;
 
+    /// <summary>
+    /// Whether this caller may act on a specific order. Anyone who can see all orders
+    /// may; anyone else only on orders they raised.
+    ///
+    /// The same rule the list endpoints apply, reused rather than reinvented — so
+    /// "which orders can I touch" cannot drift from "which orders can I see".
+    /// </summary>
+    public static bool CanAccessOrder(
+        IReadOnlyCollection<string> roles, Guid callerUserId, Guid orderCreatedBy) =>
+        CanViewAllOrders(roles) || callerUserId == orderCreatedBy;
+
     private static bool HasAny(IReadOnlyCollection<string> roles, string[] permitted) =>
         roles.Any(r => permitted.Contains(r, StringComparer.OrdinalIgnoreCase));
 }

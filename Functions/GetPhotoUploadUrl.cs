@@ -23,7 +23,7 @@ public class GetPhotoUploadUrl(
 {
     public record UploadUrlRequest(string? FileExtension);
 
-    private record StepRow(Guid Id, Guid LineItemId, Guid OrderId);
+    private record StepRow(Guid Id, Guid LineItemId, Guid OrderId, Guid OrderCreatedBy);
 
     [Function("GetPhotoUploadUrl")]
     public async Task<IActionResult> Run(
@@ -32,7 +32,13 @@ public class GetPhotoUploadUrl(
         string lineItemId,
         string stepId)
     {
-        AuthHelper.RequireCaller(req, jwtService);
+        var caller = AuthHelper.RequireCaller(req, jwtService);
+
+        // Step photos are evidence of factory work, so only the role that performs step
+        // transitions may attach them — matching the template's gating on the step
+        // updates themselves. Previously this endpoint was open to any authenticated
+        // caller, which was the one action in the system left ungated.
+        AuthHelper.RequireRole(caller, "factory_supervisor");
 
         if (!Guid.TryParse(lineItemId, out var itemId) || !Guid.TryParse(stepId, out var parsedStepId))
         {
@@ -48,9 +54,11 @@ public class GetPhotoUploadUrl(
         // Resolve the order from the step itself rather than trusting the caller, so the
         // blob path can never be pointed at another order's folder.
         var step = await connection.QuerySingleOrDefaultAsync<StepRow>(
-            @"SELECT s.id AS Id, s.line_item_id AS LineItemId, li.order_id AS OrderId
+            @"SELECT s.id AS Id, s.line_item_id AS LineItemId, li.order_id AS OrderId,
+                     o.created_by AS OrderCreatedBy
               FROM order_line_item_steps s
               JOIN order_line_items li ON li.id = s.line_item_id
+              JOIN orders o ON o.id = li.order_id
               WHERE s.id = @StepId AND s.line_item_id = @LineItemId",
             new { StepId = parsedStepId, LineItemId = itemId });
 
@@ -58,6 +66,14 @@ public class GetPhotoUploadUrl(
         {
             throw new AppException(StatusCodes.Status404NotFound, "NOT_FOUND",
                 $"Step {parsedStepId} not found on line item {itemId}");
+        }
+
+        // Same order-visibility rule the list endpoints apply, reused rather than
+        // reinvented so "which orders can I touch" cannot drift from "which can I see".
+        if (!AccessScope.CanAccessOrder(caller.Roles, caller.UserId, step.OrderCreatedBy))
+        {
+            throw new AppException(StatusCodes.Status403Forbidden, "FORBIDDEN",
+                "You may only attach photos to orders you can access");
         }
 
         var target = photoStorage.CreateUploadTarget(step.OrderId, step.LineItemId, step.Id, extension);

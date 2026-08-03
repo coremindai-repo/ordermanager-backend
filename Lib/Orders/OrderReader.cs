@@ -30,7 +30,10 @@ public sealed class OrderReader(ISqlConnectionFactory connectionFactory, IPhotoS
 
               SELECT li.id, li.item_name, li.description, li.current_status, li.method,
                      li.current_step, li.availability_status,
-                     li.originating_order_id, oo.order_number AS originating_order_number
+                     li.originating_order_id, oo.order_number AS originating_order_number,
+                     li.reference_photo_urls, li.finish,
+                     li.dimension_length_cm, li.dimension_breadth_cm,
+                     li.dimension_height_cm, li.dimension_unit_entered
               FROM order_line_items li
               LEFT JOIN orders oo ON oo.id = li.originating_order_id
               WHERE li.order_id = @Id ORDER BY li.created_at;
@@ -98,6 +101,21 @@ public sealed class OrderReader(ISqlConnectionFactory connectionFactory, IPhotoS
                 originatingOrderNumber = (string?)li.originating_order_number,
                 // Null for items manufactured to order; set only on stock items.
                 availabilityStatus = (string?)li.availability_status,
+                finish = (string?)li.finish,
+                // Always centimetres. enteredUnit records what the salesperson chose so
+                // the value can be shown back the way they typed it.
+                dimensions = li.dimension_unit_entered is null
+                    ? null
+                    : new
+                    {
+                        lengthCm = (decimal?)li.dimension_length_cm,
+                        breadthCm = (decimal?)li.dimension_breadth_cm,
+                        heightCm = (decimal?)li.dimension_height_cm,
+                        enteredUnit = (string)li.dimension_unit_entered,
+                    },
+                // Captured at item entry, before any production step exists — the
+                // supervisor reads these when choosing method and what to build.
+                referencePhotos = BuildPhotoLinks((string?)li.reference_photo_urls),
                 materials = materials
                     .Where(m => (Guid)m.line_item_id == (Guid)li.id)
                     .Select(m => ParseJson((string)m.details))

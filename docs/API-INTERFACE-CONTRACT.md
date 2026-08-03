@@ -167,12 +167,38 @@ salesperson, showroom, timestamps. Response `200` — same shape returned by
       "currentStatus": "string",
       "method": "factory | outsource | import | null",
       "currentStep": "string|null",
+      "availabilityStatus": "available | pending_sale | sold | null",
+      "originatingOrderId": "guid|null",
+      "originatingOrderNumber": "string|null",
       "materials": [ { } ]
     }
   ]
 }
 ```
 `404` if the order does not exist.
+
+**On claimed stock items.** `originatingOrderId` / `originatingOrderNumber` are non-null
+only for items claimed from inventory, and name the order that actually **made** the
+item. The order this response belongs to is the one that will **deliver** it. Surface
+the originating number where provenance matters — it is the only place the two orders
+are visibly connected.
+
+`availabilityStatus` is the sale lifecycle and is independent of `currentStatus`:
+
+| Value | Meaning |
+|---|---|
+| `null` | Manufactured to order — never inventory |
+| `available` | Made for stock, unclaimed |
+| `pending_sale` | Claimed by this order, which has not yet completed |
+| `sold` | The claiming order reached a terminal status |
+
+`pending_sale` → `sold` happens **automatically** when the order completes. There is no
+"mark as sold" action, deliberately — a sale cannot be recorded without a real order
+behind it.
+
+> **Note on `GET /api/inventory`:** it deliberately does **not** carry
+> `originatingOrderId`. Inventory only lists *unclaimed* items, and an item has no
+> originating order until it is claimed — the field would be null on every row.
 
 ### POST /api/orders
 Creates a new order (customer or stock). See §7 for the submit sequence.
@@ -188,13 +214,42 @@ Request:
       "description": "string|null",
       "method": "factory | outsource | import | null",
       "materials": [ { } ]
-    }
+    },
+    { "claimLineItemId": "guid" }
   ],
   "billTo": { },
   "shipTo": { }
 }
 ```
-- At least one line item is required; every line item requires `itemName`.
+
+**Each line item is one of two things** — something to manufacture, or a claim on
+existing stock. An order may mix both freely.
+
+| Form | Meaning |
+|---|---|
+| `itemName` (+ optional `description`, `method`, `materials`) | Make a new item |
+| `claimLineItemId` alone | Attach an existing inventory item to this order |
+
+Claiming rules:
+- **`claimLineItemId` must appear alone.** Supplying `itemName` or `method` alongside
+  it returns `400` — those come from the claimed item, and accepting both would be
+  ambiguous about which wins.
+- The claimed item must be one returned by `GET /api/inventory`: a `finished` or
+  `semi_finished` item on a **stock** order, not already claimed. Otherwise `400`.
+- Claiming an item another order already took returns **`409 ITEM_NOT_AVAILABLE`**
+  (`"…is already claimed by another order"` or `"…has already been sold"`). Two users
+  claiming the same item simultaneously is resolved server-side — exactly one wins, so
+  the app should surface this rather than pre-checking availability and assuming.
+- The same item cannot be claimed twice on one order (`400`).
+
+**A claimed item keeps everything.** Its id, production status, completed steps and
+photos all carry over — a `semi_finished` item arrives with its finished work intact and
+only needs its remaining steps planned via
+`POST /api/order-line-items/{id}/production-plan` (see §5, which now permits adding
+steps to an item already in progress).
+
+- At least one line item is required; every line item requires either `itemName` or
+  `claimLineItemId`.
 - `storeId`, if supplied, must be an active store (`400` otherwise).
 - Response `201` with the full order detail shape shown under
   `GET /api/orders/{orderId}` above.
@@ -313,6 +368,20 @@ checklist on Screen 2.
 ### POST /api/order-line-items/{lineItemId}/production-plan
 Body: `{ "method": "factory | outsource | import", "steps": ["carpentry","polishing"] }`
 Sets the chosen path and step list for one item.
+
+**A plan already in progress may be added to, but not cut back.** This is how a claimed
+semi-finished item gets its remaining steps: send the full intended step list, and any
+step not already present is appended.
+
+- Steps with **no work** against them may be removed by omitting them.
+- Steps that are **started or complete** must still appear. Omitting one returns `409`
+  `PLAN_LOCKED` naming the offending steps — their recorded work, assigned names and
+  photos cannot be discarded this way.
+- **`method` is fixed once any work exists.** Changing it returns `409 PLAN_LOCKED`: the
+  completed steps were performed under the original method, and switching would leave
+  that history describing a route the item never took.
+- Appended steps continue the existing sequence rather than renumbering, so completed
+  steps keep the position they were worked in.
 
 ### POST /api/order-line-items/{lineItemId}/production-steps/{stepId}/update
 Body: `{ "status": "started | complete", "assignedNames": ["string"], "photoUrls": ["string"] }`
@@ -777,7 +846,8 @@ Codes seen in practice:
 | `ILLEGAL_TRANSITION` | 409 | The move is not permitted by the template, or the record changed concurrently |
 | `LINE_ITEMS_INCOMPLETE` | 409 | Transition is gated on every line item being complete, and some are not |
 | `DESTINATION_STORE_REQUIRED` | 409 | Dispatching towards a store with no destination set |
-| `PLAN_LOCKED` | 409 | The production plan cannot change once work has started |
+| `PLAN_LOCKED` | 409 | A plan change would remove or reset work already recorded, or change method after work started |
+| `ITEM_NOT_AVAILABLE` | 409 | The inventory item being claimed is already claimed or sold |
 | `SOHO_UNAVAILABLE` | 503 | SOHO could not be reached; no customer order was created |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 

@@ -127,6 +127,19 @@ Each of these was raised and settled. They are recorded so nobody re-opens them 
   no per-user read marker. A "recently sent" list is sufficient for the pilot.
 - **Order cancellation / order-type conversion.** Out of scope this phase; `order_type`
   is fixed for an order's lifetime, which the template branching assumes.
+
+  ⚠ **Two consequences of claiming that have no answer yet**, both waiting on
+  cancellation being scoped. Neither breaks anything today; both would surface as
+  puzzling behaviour:
+
+  - **No release path.** An item claimed into an order that then stalls sits in
+    `pending_sale` indefinitely — absent from inventory, unsellable, with nothing to
+    return it to `available`. "The sale fell through" currently has no representation.
+  - **Emptied originating orders.** Claiming reassigns `order_id`, so a stock order
+    whose items are all claimed ends up with none. It is not stuck — it is already past
+    the completeness gate — but it *would* be if it ever took the
+    `KEEP_IN_FACTORY → IN_PRODUCTION` revert, because `AllComplete([])` returns `false`
+    by design. Whether such an order should auto-close is undecided.
 - **Speech-to-text.** Confirmed out of scope for the pilot. If it lands later it is an
   Azure Speech call from the mobile app, never a backend proxy (CLAUDE.md §8).
 - **ZOHO invoicing** — never in scope; invoicing is manual outside the app.
@@ -168,6 +181,17 @@ Each of these looks like a bug or an oversight without the reasoning.
 - **Raising a raw material request is ungated on purpose.** Contract §3 says a
   factory_supervisor raises them; they just cannot progress one through supplier contact.
 
+### …claimed stock
+- **After a claim, `order_id` means "who delivers this", not "who made this".** Use
+  `COALESCE(originating_order_id, order_id)` for anything reporting on production. A
+  query written from habit will silently attribute production to the claiming order.
+- `availability_status` (`available → pending_sale → sold`) is a **sale** lifecycle,
+  entirely separate from production status, and NULL for items made to order. Both
+  transitions are side effects — claiming, and the claiming order completing — never
+  endpoints, so a sale cannot be recorded without a real order behind it.
+- `GET /api/inventory` deliberately omits `originating_order_id`: inventory lists only
+  unclaimed items, so it would be null on every row. It appears on order detail instead.
+
 ### …inventory
 - **There is no inventory table and there should not be one.** Inventory is a query over
   finished/semi-finished line items of undelivered *stock* orders. Storing it would need
@@ -177,10 +201,21 @@ Each of these looks like a bug or an oversight without the reasoning.
   CLAUDE.md §8a.
 
 ### …statuses
-- **`SEMI_FINISHED` is outsource-only.** An outsourcing supplier may do part of the job;
-  an import always arrives complete, and a part-built factory item is work in progress on
-  a production step, not a returned state. Enforced in both the template and
-  `OutsourcingStatusFlow`.
+- **`SEMI_FINISHED` is outsource-only**, and this is settled rather than an oversight.
+  An outsourcing supplier may do part of the job; an import always arrives complete; and
+  a part-built factory item is work in progress on a production step, not a returned
+  state. **A factory-produced item is only ever inventory-eligible once `FINISHED`.**
+  Enforced in both the template and `OutsourcingStatusFlow`.
+
+  Semi-finished *stock* therefore has exactly two legitimate origins, both expected:
+  a cancelled customer order leaving a part-built outsourced item stranded, and the
+  company manager deliberately outsourcing an item for stock that comes back partly
+  done.
+
+- **Finished vs semi-finished is decided at RECEIPT, not when the outsourcing request is
+  placed.** The request records what the supplier actually delivered
+  (`received_finished` / `received_semi_finished`), so nothing needs to be predicted
+  upfront. Same either way, whether the outsourcing serves a stock or a customer order.
 - **Raw material and outsourcing chains are hard-coded, not templatized.** Contract §6
   calls them fixed sub-processes. Their unit tests are the only thing protecting them.
 

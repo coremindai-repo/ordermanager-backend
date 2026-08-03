@@ -28,8 +28,12 @@ public sealed class OrderReader(ISqlConnectionFactory connectionFactory, IPhotoS
 
               SELECT bill_to, ship_to FROM billing_shipping_details WHERE order_id = @Id;
 
-              SELECT id, item_name, description, current_status, method, current_step
-              FROM order_line_items WHERE order_id = @Id ORDER BY created_at;
+              SELECT li.id, li.item_name, li.description, li.current_status, li.method,
+                     li.current_step, li.availability_status,
+                     li.originating_order_id, oo.order_number AS originating_order_number
+              FROM order_line_items li
+              LEFT JOIN orders oo ON oo.id = li.originating_order_id
+              WHERE li.order_id = @Id ORDER BY li.created_at;
 
               SELECT m.line_item_id, m.details
               FROM materials m
@@ -88,6 +92,12 @@ public sealed class OrderReader(ISqlConnectionFactory connectionFactory, IPhotoS
                 currentStatus = (string)li.current_status,
                 method = (string?)li.method,
                 currentStep = (string?)li.current_step,
+                // Null unless this item was claimed from stock. Where it was actually
+                // made — order_id names who delivers it, not who produced it.
+                originatingOrderId = (Guid?)li.originating_order_id,
+                originatingOrderNumber = (string?)li.originating_order_number,
+                // Null for items manufactured to order; set only on stock items.
+                availabilityStatus = (string?)li.availability_status,
                 materials = materials
                     .Where(m => (Guid)m.line_item_id == (Guid)li.id)
                     .Select(m => ParseJson((string)m.details))

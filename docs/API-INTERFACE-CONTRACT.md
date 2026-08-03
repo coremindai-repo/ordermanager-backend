@@ -477,6 +477,8 @@ Response `200`:
       "currentStep": "CARPENTRY",
       "method": "factory|outsource|import|null",
       "availabilityStatus": "available|pending_sale|sold|null",
+      "originatingOrderId": "guid|null",
+      "originatingOrderNumber": "string|null",
       "finish": "string|null",
       "dimensions": { "lengthCm": 0, "breadthCm": 0, "heightCm": 0, "enteredUnit": "cm" },
       "order": {
@@ -509,20 +511,55 @@ Response `200`:
 }
 ```
 
+**The response wrapper is `lineItems`** — an array, always present, empty rather than
+absent when nothing matches. `count` is the length of *this page*, not the total number
+of matching items; see `truncated` below.
+
+**Entries are the §4 line-item shape, trimmed, plus order context.** The delta is exactly
+this and nothing else — anything not listed here is identical to the line-item objects
+under `GET /api/orders/{orderId}`:
+
+| vs. §4 line item | Field | Why |
+|---|---|---|
+| **Omitted** | `materials` | Free-form and potentially large; the supervisor reads materials on the item screen, which loads the order detail anyway |
+| **Omitted** | `productionSteps[].photos` | Can be many per item, and are only wanted on the step screen |
+| **Added** | `order` | Which order, whose, and where it is going — this list spans orders, so each row needs its own context |
+| **Added** | `createdAt` / `updatedAt` | The item's own timestamps; `createdAt` is the sort key (see ordering below) |
+
+Everything else carries over unchanged, including `originatingOrderId` /
+`originatingOrderNumber`. Those matter here specifically: a **claimed semi-finished item
+appears in this queue** needing its remaining steps planned, and this is the only screen
+where the order that *made* it is visibly connected to the one that will *deliver* it.
+
 - **`productionSteps` is carried inline**, so a step can be acted on straight from the
-  list without fetching each parent order for its `stepId`s. Same shape as §4's, with
-  one omission: step **photos are not included** — there can be many per item and they
-  are only wanted on the step screen, which loads the order detail anyway.
+  list without fetching each parent order for its `stepId`s — same `stepId` values the
+  step-update and step-photo endpoints take.
 - **`referencePhotos` are** included; the supervisor identifies an item by sight. Read
   URLs are short-lived, as everywhere else.
-- **`order`** carries enough context to act — which order, whose, and where it is going —
-  without a second call per row.
+- **`order.orderId` and `order.orderNumber`** are on every entry. `orderId` is what the
+  order-level endpoints take; `orderNumber` is the human-readable string staff search on.
+  Neither is ever null.
 - **Ordering is oldest-first** (`createdAt` ascending). This is a work queue: the item
   waiting longest should be at the top, not buried.
-- **`truncated`** is `true` when more items match than were returned. Because of the
-  ordering, what gets dropped is the newest arrivals, never the longest waits. Narrow
-  with `status`/`method` or raise `limit` rather than assuming a full page is the whole
-  queue.
+
+**Truncation is signalled by `truncated`, not by `count`.** Three fields describe the
+page, and only one of them answers "is there more":
+
+| Field | Meaning |
+|---|---|
+| `count` | Items in **this response**. Never a total |
+| `limit` | The effective page size — the value sent, or 100 by default |
+| `truncated` | `true` when more items matched than were returned |
+
+Read `truncated` directly. Do **not** infer exhaustion from `count < limit` — it happens
+to hold today, but it is not the contract, and it silently becomes wrong if paging
+changes. `truncated: false` is the only guarantee that the queue is complete.
+
+There is no cursor or page token: this endpoint returns one page, and the intended
+response to `truncated: true` is to **narrow** with `status`/`method`/`orderId`, or raise
+`limit` (max 500). Because ordering is oldest-first, what a truncated page drops is the
+newest arrivals — never the longest waits — so the top of the queue is always accurate
+even when the tail is cut.
 
 **Visibility** follows §3 exactly, and is the same rule as `GET /api/orders`: an item is
 visible when its order is. `factory_supervisor`, `store_manager` and `company_manager`

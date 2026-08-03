@@ -101,12 +101,14 @@ public class ListLineItems(
                      li.reference_photo_urls, li.created_at, li.updated_at,
                      li.dimension_length_cm, li.dimension_breadth_cm,
                      li.dimension_height_cm, li.dimension_unit_entered,
+                     li.originating_order_id, oo.order_number AS originating_order_number,
                      o.id AS order_id, o.order_number, o.order_type,
                      o.current_status AS order_status,
                      s.name AS store_name,
                      u.first_name, u.last_name
               FROM order_line_items li
               JOIN orders o ON o.id = li.order_id
+              LEFT JOIN orders oo ON oo.id = li.originating_order_id
               LEFT JOIN stores s ON s.id = o.store_id
               JOIN users u ON u.id = o.created_by
               WHERE (@Status IS NULL OR li.current_status = @Status)
@@ -154,6 +156,12 @@ public class ListLineItems(
             currentStep = (string?)li.current_step,
             method = (string?)li.method,
             availabilityStatus = (string?)li.availability_status,
+            // Non-null only for an item claimed from stock. A claimed semi-finished item
+            // shows up in this queue needing its remaining steps, and this is the only
+            // place the order that MADE it is visibly connected to the one delivering it
+            // — §4 says surface it where provenance matters, and a work queue is that.
+            originatingOrderId = (Guid?)li.originating_order_id,
+            originatingOrderNumber = (string?)li.originating_order_number,
             finish = (string?)li.finish,
             dimensions = li.dimension_unit_entered is null
                 ? null

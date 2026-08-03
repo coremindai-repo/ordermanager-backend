@@ -91,7 +91,13 @@
       "Bash(mv tests/OrderManager.Backend.Tests/ProductionTemplateV2Tests.cs tests/OrderManager.Backend.Tests/ProductionTemplateV3Tests.cs)",
       "Bash(xargs -n1 basename)",
       "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P 'JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1!' -I -l 90 -i 022_raw_material_request_line_item.sql)",
-      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -h -1 -W -Q 'SET NOCOUNT ON; *)"
+      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -h -1 -W -Q 'SET NOCOUNT ON; *)",
+      "Bash(gh run *)",
+      "PowerShell($g = Get-Command gh -ErrorAction SilentlyContinue; if \\($g\\) { $g.Source } else { \"gh not installed\" })",
+      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -b -Q ' *)",
+      "Bash(read ORDER_ID LI_ID ADMIN SUPA SUPB)",
+      "Bash(read ORDER_ID LI_ID REST)",
+      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -b -h -1 -W -Q ' *)"
     ]
   }
 }

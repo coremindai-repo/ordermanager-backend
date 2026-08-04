@@ -98,7 +98,12 @@
       "Bash(read ORDER_ID LI_ID ADMIN SUPA SUPB)",
       "Bash(read ORDER_ID LI_ID REST)",
       "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -b -h -1 -W -Q ' *)",
-      "Bash(grep -n \"^## \\\\|^| \\\\`\" docs/ORIENTATION.md)"
+      "Bash(grep -n \"^## \\\\|^| \\\\`\" docs/ORIENTATION.md)",
+      "Bash(mkdir -p /tmp/faketest/docs)",
+      "Bash(echo \"different content\")",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(python3 -c ' *)",
+      "Read(//tmp/**)"
     ]
   }
 }

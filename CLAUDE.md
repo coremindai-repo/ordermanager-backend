@@ -44,6 +44,15 @@ outsourcing/import).
 - Do not touch the mobile repository. If a change here requires a change to
   `API-INTERFACE-CONTRACT.md`, flag it and wait for confirmation before
   changing the contract — the mobile team builds against it independently.
+
+  **Exception:** syncing `docs/API-INTERFACE-CONTRACT.md` to the mobile
+  repo's identical copy is permitted, but only when the user explicitly
+  authorizes that specific sync in that session — never as a standing
+  green light inferred from this note or from a past session having done
+  it. This does not extend to any other file or any code in the mobile
+  repo. If asked to sync and the contract file has drifted in more places
+  than the one requested, copy only what was authorized and flag the rest
+  rather than reconciling the whole file unasked.
 - **When a new endpoint returns a shape derived from an entity the contract
   already documents, diff the two field lists mechanically before publishing.**
   Run `python scripts/diff-response-shape.py <heading-a> <heading-b>`, then

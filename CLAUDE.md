@@ -53,6 +53,29 @@ outsourcing/import).
   repo. If asked to sync and the contract file has drifted in more places
   than the one requested, copy only what was authorized and flag the rest
   rather than reconciling the whole file unasked.
+
+  **Standing process risk: the sync above has no enforcement, so it can
+  simply not happen and nobody finds out until a mismatch surfaces
+  downstream.** That is exactly what happened in Epic 6: the
+  `GET /api/outsourcing-requests` response shape was written into this
+  repo's contract, never copied to the mobile repo, and nothing caught
+  the gap until mobile had already built against a defensively-inferred
+  shape. There is no CI check across two separate repos to catch this —
+  it depends entirely on someone remembering.
+
+  Mitigation, two parts:
+  1. **After any contract change, before calling it done, explicitly
+     confirm the mobile repo's copy was updated** — do not assume a sync
+     happened just because it was requested or because a past session
+     did one. "Done" means both copies verified identical, not "I edited
+     the backend's copy."
+  2. **`scripts/check-mobile-contract-sync.py`** diffs this repo's
+     contract against the mobile repo's copy when both are checked out
+     on the same machine (pass a path if the mobile repo isn't at a
+     sibling location). Run it after any contract edit and whenever
+     picking up mobile-side integration questions — a stale copy is the
+     first thing worth ruling out. It only detects drift; fixing it
+     still needs the explicit-authorization exception above.
 - **When a new endpoint returns a shape derived from an entity the contract
   already documents, diff the two field lists mechanically before publishing.**
   Run `python scripts/diff-response-shape.py <heading-a> <heading-b>`, then

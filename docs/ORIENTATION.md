@@ -8,7 +8,9 @@ Companion docs:
 - **CLAUDE.md** — the authoritative build rules and process design. Read §5 (workflow
   engine) before touching anything status-related.
 - **docs/API-INTERFACE-CONTRACT.md** — the contract shared with the mobile repo. Both
-  copies must stay identical.
+  copies must stay identical, but nothing enforces that automatically — the sync is
+  manual and easy to forget (CLAUDE.md §2 has the details and what happened in Epic 6
+  when it was). Run `scripts/check-mobile-contract-sync.py` after any contract change.
 - **docs/infrastructure.md** — what exists in Azure, configuration, and the go-live
   checklist.
 

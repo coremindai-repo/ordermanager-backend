@@ -97,7 +97,8 @@
       "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -b -Q ' *)",
       "Bash(read ORDER_ID LI_ID ADMIN SUPA SUPB)",
       "Bash(read ORDER_ID LI_ID REST)",
-      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -b -h -1 -W -Q ' *)"
+      "Bash(sqlcmd -S sql-ordermanager-nilambur.database.windows.net -d sqldb-ordermanager -U sqladmin -P JhjlnS4QFpgQ9x7zPH3p8x4v6sLNAa1! -I -l 120 -b -h -1 -W -Q ' *)",
+      "Bash(grep -n \"^## \\\\|^| \\\\`\" docs/ORIENTATION.md)"
     ]
   }
 }

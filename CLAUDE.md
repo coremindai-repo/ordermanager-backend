@@ -154,7 +154,7 @@ collide. `D4` is a minimum width, not a cap.
 - **materials** — line_item_id, material details (as captured on the
   "Add Material" screen)
 - **raw_material_requests** — id, requested_by, items json, status,
-  supplier json (nullable), timestamps
+  supplier json (nullable), line_item_id (nullable — see §6b), timestamps
 - **outsourcing_requests** — id, requested_by, items json, status,
   supplier json (nullable), timestamps
 - ~~**inventory**~~ — **no such table.** Inventory is a *read model over stock
@@ -328,6 +328,42 @@ Receiving a request advances its line items automatically, through the same vali
 and writing the same history rows as a manual transition — so no template rule is
 bypassed, and an item the move would be illegal for is skipped and logged rather than
 forced.
+
+## 6b. Raw material requests tied to a line item
+
+`raw_material_requests.line_item_id` is nullable and optional — the same
+optional-provenance pattern as `order_line_items.originating_order_id`. A store
+manager's stock-level request names no item; a supervisor's request against the item
+whose production is waiting does.
+
+Two decisions here look like omissions and are not.
+
+**It is deliberately not a gate.** An unreceived request does **not** block a production
+step. The supervisor moves steps by hand and already decides whether materials are on
+hand — a system gate would duplicate a judgment that is theirs, and would strand items
+whenever a request was raised late or informally. Confirmed with the client. If this
+ever needs to change it belongs in the production step template as a transition flag
+alongside `requiresAllLineItemsComplete`, **not** as a hardcoded check in the raw
+material endpoints — the point of the config-driven engine is that a client whose
+process differs needs no code change.
+
+**Visibility follows the item, which creates an asymmetry that reads as a bug.** A
+request naming a line item describes that *item*, so anyone who can access the item's
+order sees it — that is the whole point, so a second supervisor picking the item up can
+tell materials are already on order instead of raising a duplicate. A standalone request
+keeps the original rule and stays with whoever raised it.
+
+The consequence: **a factory supervisor sees a colleague's item-linked request but not
+their otherwise-identical standalone one.** That is correct and intended. The rule is
+stated once in `AccessScope.CanViewRawMaterialRequest` with its tests, and transcribed
+into `RawMaterialRequests.List`'s WHERE clause so the database does the filtering —
+change one and you must change the other. The mobile app distinguishes the two kinds by
+`lineItem` being null, so the asymmetry is visible on screen rather than looking like
+missing data.
+
+Neither of these affects the store manager's procurement flow: they hold
+`CanViewAllProcurement`, so they see every request either way, and the status chain is
+identical for linked and standalone requests.
 
 ## 7. Notifications
 

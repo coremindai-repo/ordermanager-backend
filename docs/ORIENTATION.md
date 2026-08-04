@@ -84,6 +84,7 @@ put the *rule* in a pure class with tests and let the endpoint orchestrate.
 | `Middleware/` | Error shaping. |
 | `sql/` | Numbered migrations, applied in order. Templates are versioned *data*, so process changes appear here as new `*_template_v*.sql` files rather than code changes. |
 | `tests/` | xUnit. Pure-logic focused; no database or network needed. |
+| `scripts/` | Dev tooling, not shipped. `diff-response-shape.py` compares two documented endpoints' field lists — required before publishing a contract change that reuses a documented entity (CLAUDE.md §2). |
 
 **Reading order for a newcomer:** `Lib/Workflow/WorkflowTemplate.cs` →
 `TransitionValidator.cs` → `Functions/OrderTransition.cs` → the latest
@@ -95,8 +96,8 @@ put the *rule* in a pure class with tests and let the endpoint orchestrate.
 Auth (login, JWT, device registration) · the workflow engine and both templates ·
 order capture · factory production flow with photo attachments · store manager flow
 (invoicing handoff, raw materials) · outsourcing/import · push notifications via Expo ·
-read APIs (orders, history, notifications, inventory, dashboard) · role gating on every
-transition.
+read APIs (orders, line-item work queue, history, notifications, inventory, dashboard) ·
+role gating on every transition.
 
 ### Stubbed — works, but not real
 - **SOHO** (`Lib/Soho/`). No real API from the client yet. `StubSohoClient` issues
@@ -180,6 +181,25 @@ Each of these looks like a bug or an oversight without the reasoning.
   revert of invoicing. Confirmed with the client.
 - **Raising a raw material request is ungated on purpose.** Contract §3 says a
   factory_supervisor raises them; they just cannot progress one through supplier contact.
+
+### …raw material requests
+- **A supervisor sees a colleague's *item-linked* request but not their *standalone*
+  one.** Not a bug. A request naming a line item describes the item, so it follows the
+  item — that is what stops a second supervisor duplicating an order already placed. A
+  standalone request stays with its raiser. Store/company managers see everything either
+  way. `AccessScope.CanViewRawMaterialRequest` states the rule; `RawMaterialRequests.List`
+  transcribes it into SQL. Change one, change both.
+- **An unreceived request does not block a production step, by design.** The supervisor
+  already judges whether materials are on hand. If it ever must become a gate, it goes
+  in the production step template as a transition flag — not as a check in the raw
+  material endpoints. See CLAUDE.md §6b.
+
+### …a line item's status fields
+- **`current_step` is a duplicate of `current_status`**, written to the same value on
+  every transition. It is kept only because the mobile app reads it for display. Filter
+  and branch on `current_status`; do not try to give `current_step` independent meaning,
+  and do not drop the column without coordinating with mobile — two screens still read
+  it. The contract says the same under §4.
 
 ### …claimed stock
 - **After a claim, `order_id` means "who delivers this", not "who made this".** Use

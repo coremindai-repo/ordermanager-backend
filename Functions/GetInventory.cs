@@ -59,6 +59,7 @@ public class GetInventory(ISqlConnectionFactory connectionFactory, JwtService jw
               JOIN orders o ON o.id = li.order_id
               LEFT JOIN stores s ON s.id = o.store_id
               WHERE o.order_type = 'stock'
+                AND o.is_test_data = 0
                 AND li.current_status IN ('FINISHED', 'SEMI_FINISHED')
                 AND o.current_status <> 'DELIVERED'
                 -- Claimed and sold stock is no longer available to sell. A claimed item

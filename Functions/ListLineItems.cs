@@ -115,6 +115,7 @@ public class ListLineItems(
                 AND (@Method IS NULL OR li.method = @Method)
                 AND (@OrderId IS NULL OR li.order_id = @OrderId)
                 AND (@RestrictToOwn = 0 OR o.created_by = @UserId)
+                AND o.is_test_data = 0
               ORDER BY li.created_at",
             new
             {

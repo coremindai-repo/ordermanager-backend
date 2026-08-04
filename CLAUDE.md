@@ -201,7 +201,7 @@ collide. `D4` is a minimum width, not a cap.
 
 - **orders** — id, order_number, order_type (`customer`|`stock`), soho_order_ref
   (nullable), current_status, store_id (destination), created_by,
-  created_at, updated_at
+  created_at, updated_at, is_test_data (bit, default 0 — see below)
 - **order_line_items** — id, order_id, item_name, description,
   current_status, method (`factory`|`outsource`|`import`), current_step,
   created_at, updated_at
@@ -212,6 +212,26 @@ collide. `D4` is a minimum width, not a cap.
   every transition ever made, with user_id and timestamp. This is the table
   that makes future reporting possible — do not skip or thin this out for
   convenience.
+
+### Dev/test verification data: tag, never delete
+
+`orders.is_test_data` (`sql/025_order_is_test_data_flag.sql`) exists because deleting a
+test order isn't actually possible without breaking the append-only rule above: an
+order can't be removed while its `order_status_history` rows still reference it, and
+those rows must never be deleted. Tagging instead of deleting respects that fully.
+
+`GetOrders`, `GetDashboard`, `GetInventory`, `GetOrderHistory` and `ListLineItems` all
+filter `is_test_data = 0` — every endpoint that lists or aggregates orders rather than
+fetching one by id. `GetOrderById` deliberately does **not** filter: a direct fetch by a
+known id is not a "browse," and verification work needs to be able to read a tagged
+order back. Not exposed in any API response — server-side only, no contract impact.
+
+When a Claude Code session creates orders to verify a live fix (as opposed to normal
+manual QA), tag them the same way: `UPDATE orders SET is_test_data = 1 WHERE id = ...`
+(or `WHERE created_by = ...` for a whole dev account's orders, which is more reliable
+than matching on item-name patterns). Do this before calling verification "done," not
+as an afterthought — that is what turned ~20 orders from the `NEW → IN_PRODUCTION`
+rollout into a cleanup question in the first place.
 - **billing_shipping_details** — order_id, bill_to json, ship_to json
 - **materials** — line_item_id, material details (as captured on the
   "Add Material" screen)

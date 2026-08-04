@@ -73,6 +73,7 @@ public class GetOrderHistory(ISqlConnectionFactory connectionFactory, JwtService
                 JOIN users u ON u.id = h.user_id
                 WHERE (@OrderId IS NULL OR h.order_id = @OrderId)
                   AND (@RestrictToOwn = 0 OR o.created_by = @UserId)
+                  AND o.is_test_data = 0
 
                 UNION ALL
 
@@ -86,6 +87,7 @@ public class GetOrderHistory(ISqlConnectionFactory connectionFactory, JwtService
                 JOIN users u ON u.id = h.user_id
                 WHERE (@OrderId IS NULL OR li.order_id = @OrderId)
                   AND (@RestrictToOwn = 0 OR o.created_by = @UserId)
+                  AND o.is_test_data = 0
               ) history
               WHERE (@From IS NULL OR created_at >= @From)
                 AND (@To IS NULL OR created_at < @To)

@@ -42,6 +42,7 @@ public class GetDashboard(
             @"SELECT current_status, COUNT(*) AS count
               FROM orders
               WHERE (@RestrictToOwn = 0 OR created_by = @UserId)
+                AND is_test_data = 0
               GROUP BY current_status",
             new { RestrictToOwn = restrictToOwn ? 1 : 0, UserId = caller.UserId }))
             .ToDictionary(r => (string)r.current_status, r => (int)r.count, StringComparer.OrdinalIgnoreCase);

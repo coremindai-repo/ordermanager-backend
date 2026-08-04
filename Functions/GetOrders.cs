@@ -48,6 +48,7 @@ public class GetOrders(ISqlConnectionFactory connectionFactory, JwtService jwtSe
               WHERE (@Type IS NULL OR o.order_type = @Type)
                 AND (@Status IS NULL OR o.current_status = @Status)
                 AND (@RestrictToOwn = 0 OR o.created_by = @UserId)
+                AND o.is_test_data = 0
               ORDER BY o.created_at DESC",
             new
             {

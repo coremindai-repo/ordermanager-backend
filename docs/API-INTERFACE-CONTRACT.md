@@ -87,7 +87,8 @@ message naming the roles required.
 
 | Action | Roles |
 |---|---|
-| Create an order (`NEW → IN_PRODUCTION`) | salesperson, company_manager |
+| Create an order (`POST /api/orders`, starts at `NEW`) | salesperson, company_manager |
+| `NEW → IN_PRODUCTION` | factory_supervisor — see note below |
 | Production step transitions | factory_supervisor |
 | Move an order out of production | factory_supervisor |
 | `READY_TO_INVOICE → READY_TO_DELIVER` | store_manager, company_manager |
@@ -97,6 +98,14 @@ message naming the roles required.
 | Outsourcing/import requests (create and status) | company_manager |
 | Raw material request *status* changes | store_manager, company_manager |
 | Raw material request *creation* | any authenticated user (a factory_supervisor raises them, per the table above) |
+
+**`NEW → IN_PRODUCTION` is not called directly by any screen.** It fires automatically,
+server-side, the first time `POST .../production-plan` is called for any line item on
+the order — the real-world moment production starts. There is no button for it and none
+is needed; a supervisor setting a plan is the trigger. This marks the sales-to-production
+handoff (salesperson captures the order → supervisor owns it from here through leaving
+the factory, with the customer-order invoice notification firing at that later handoff —
+§5).
 
 For the mobile side this means a screen should not offer an action the caller's role
 cannot perform — a `403` here is a UX bug, not an error state worth surfacing as a
@@ -371,7 +380,7 @@ forbidden — the app should open the store picker.
 
 ### Order statuses
 
-The current process template (v4). **The flow branches on `orderType`** — invoicing
+The current process template (v7). **The flow branches on `orderType`** — invoicing
 happens immediately after production and applies to customer orders only:
 
 ```

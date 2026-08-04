@@ -262,14 +262,14 @@ handles it. Always pair a template edit with a redeploy.
 
 ### Role gating — enforced
 
-Every transition is gated. Process template v6 and production step template v4 set
+Every transition is gated. Process template v7 and production step template v4 set
 `allowedRoles` on **every** edge; a transition without it would be open to anyone, so
 `RoleGatingTests.NoTransitionIsLeftUngated` fails the build if one is ever added
 without roles.
 
 | Transition | Roles |
 |---|---|
-| `NEW → IN_PRODUCTION` | salesperson, company_manager |
+| `NEW → IN_PRODUCTION` | factory_supervisor |
 | Production steps (all) | factory_supervisor |
 | Leaving production (both order-type branches) | factory_supervisor |
 | `READY_TO_INVOICE → READY_TO_DELIVER` | store_manager, company_manager |
@@ -279,7 +279,20 @@ without roles.
 | Outsourcing/import requests | company_manager |
 | Raw material request *transitions* | store_manager, company_manager |
 
-Two things that are easy to get wrong here:
+Things that are easy to get wrong here:
+
+**`NEW → IN_PRODUCTION` fires automatically from `SetProductionPlan`, not from a
+screen.** Nothing in this system ever called this transition directly — no endpoint, no
+button — so every order sat at `NEW` forever until mobile traced the gap. `factory_supervisor`
+owns it because that is the caller whose actual action (setting the first production
+plan on any of the order's line items) triggers it; it fires through the same
+`TransitionValidator` and writes the same `order_status_history` row a manual transition
+would, and is a no-op once the order has moved past `NEW` (so later re-plans and a
+semi-finished item's return to the checklist do not re-fire it). Confirmed with the
+client: the ownership sequence is salesperson (capture) → supervisor (submission through
+leaving the factory) → invoice raised at that handoff for customer orders → store
+manager from there — so a salesperson advancing production status never fit the actual
+process, whatever the template originally said.
 
 **The supplier edges on the production template are `company_manager`, not
 `factory_supervisor`.** Those line-item moves are not performed by hand — the

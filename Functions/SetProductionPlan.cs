@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
 using OrderManager.Backend.Lib;
 using OrderManager.Backend.Lib.Workflow;
 
@@ -14,15 +15,21 @@ namespace OrderManager.Backend.Functions;
 ///
 /// factory_supervisor only: they are the one choosing method and steps on the design
 /// screens, same as every other production-side decision in CLAUDE.md §5's role table.
+///
+/// Also where NEW -> IN_PRODUCTION fires (process template v7): nothing else in the
+/// system ever triggers it, and this is the real-world moment production starts — see
+/// <see cref="AdvanceOrderIfStillNewAsync"/>.
 /// </summary>
 public class SetProductionPlan(
     ISqlConnectionFactory connectionFactory,
     JwtService jwtService,
-    ITemplateProvider templateProvider)
+    ITemplateProvider templateProvider,
+    TransitionValidator validator,
+    ILogger<SetProductionPlan> logger)
 {
     public record ProductionPlanRequest(string Method, List<string>? Steps);
 
-    private record LineItemRow(Guid Id, Guid OrderId, string CurrentStatus, string? Method);
+    private record LineItemRow(Guid Id, Guid OrderId, string CurrentStatus, string? Method, string OrderStatus, string OrderType);
 
     private static readonly string[] ValidMethods = ["factory", "outsource", "import"];
 
@@ -92,8 +99,11 @@ public class SetProductionPlan(
         await connection.OpenAsync();
 
         var item = await connection.QuerySingleOrDefaultAsync<LineItemRow>(
-            @"SELECT id AS Id, order_id AS OrderId, current_status AS CurrentStatus, method AS Method
-              FROM order_line_items WHERE id = @Id",
+            @"SELECT li.id AS Id, li.order_id AS OrderId, li.current_status AS CurrentStatus, li.method AS Method,
+                     o.current_status AS OrderStatus, o.order_type AS OrderType
+              FROM order_line_items li
+              JOIN orders o ON o.id = li.order_id
+              WHERE li.id = @Id",
             new { Id = id });
 
         if (item is null)
@@ -153,6 +163,8 @@ public class SetProductionPlan(
             new { Id = id, Method = requestedMethod },
             transaction);
 
+        await AdvanceOrderIfStillNewAsync(connection, transaction, item, caller);
+
         transaction.Commit();
 
         var steps = await connection.QueryAsync(
@@ -172,5 +184,64 @@ public class SetProductionPlan(
                 status = (string)s.status,
             }).ToList(),
         });
+    }
+
+    /// <summary>
+    /// Fires NEW -> IN_PRODUCTION the first time any line item on the order gets a
+    /// production plan set — process template v7. Nothing else in the system ever
+    /// triggers this transition (mobile traced every order sitting at NEW forever, with
+    /// no screen or automatic path to move it); this is the real-world moment
+    /// production starts, symmetric with the order leaving production only once every
+    /// item is complete (requiresAllLineItemsComplete).
+    ///
+    /// Idempotent: a no-op once the order has moved past NEW, so later re-plans and a
+    /// semi-finished item's return to the factory checklist do not attempt this again.
+    /// Runs through the same validator and writes the same order_status_history row as
+    /// a manual transition — no template rule is bypassed. Best-effort like
+    /// OutsourcingRequests.AdvanceLineItemsAsync: the supervisor's actual request (set
+    /// this item's plan) must not fail because a secondary bookkeeping step could not
+    /// apply, so a validation failure here is logged, not thrown.
+    /// </summary>
+    private async Task AdvanceOrderIfStillNewAsync(
+        SqlConnection connection, SqlTransaction transaction, LineItemRow item, Caller caller)
+    {
+        if (!string.Equals(item.OrderStatus, "NEW", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var processTemplate = await templateProvider.GetActiveAsync(TemplateKind.Process);
+
+        var decision = validator.Validate(
+            processTemplate, item.OrderStatus, "IN_PRODUCTION", caller.Roles, orderType: item.OrderType);
+
+        if (!decision.IsAllowed)
+        {
+            logger.LogWarning(
+                "Order {OrderId} not advanced to IN_PRODUCTION after a production plan on line item {LineItemId}: {Reason}",
+                item.OrderId, item.Id, decision.Message);
+            return;
+        }
+
+        var canonicalStatus = processTemplate.ResolveStatusCode("IN_PRODUCTION");
+
+        var updated = await connection.ExecuteAsync(
+            @"UPDATE orders SET current_status = @To, updated_at = SYSUTCDATETIME()
+              WHERE id = @OrderId AND current_status = @From",
+            new { OrderId = item.OrderId, To = canonicalStatus, From = item.OrderStatus },
+            transaction);
+
+        if (updated == 0)
+        {
+            // Changed concurrently (e.g. two line items planned at once) — the other
+            // caller's write already advanced it, so there is nothing left to do here.
+            return;
+        }
+
+        await connection.ExecuteAsync(
+            @"INSERT INTO order_status_history (order_id, from_status, to_status, user_id, notes)
+              VALUES (@OrderId, @From, @To, @UserId, 'Automatic: first production plan set on the order')",
+            new { OrderId = item.OrderId, From = item.OrderStatus, To = canonicalStatus, UserId = caller.UserId },
+            transaction);
     }
 }

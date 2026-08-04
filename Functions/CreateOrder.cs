@@ -62,9 +62,11 @@ public class CreateOrder(
     {
         var caller = AuthHelper.RequireCaller(req, jwtService);
 
-        // Contract §3: order creation belongs to salesperson, plus company_manager per
-        // the action table's closest row (NEW -> IN_PRODUCTION). factory_supervisor and
-        // store_manager are never listed as raising orders.
+        // Contract §3's visibility table lists "order creation" only under salesperson,
+        // plus company_manager per its own umbrella ("everything store_manager does").
+        // factory_supervisor and store_manager are never listed as raising orders — a
+        // distinct question from who owns NEW -> IN_PRODUCTION (factory_supervisor,
+        // process template v7), which this endpoint never touches.
         AuthHelper.RequireRole(caller, "salesperson", "company_manager");
 
         var request = await ReadAndValidateAsync(req);

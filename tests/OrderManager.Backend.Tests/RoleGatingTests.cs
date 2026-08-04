@@ -5,7 +5,7 @@ namespace OrderManager.Backend.Tests;
 
 /// <summary>
 /// Role gating on transitions, per the client's confirmed mapping. Mirrors
-/// sql/017_process_template_v6.sql and sql/018_production_step_template_v4.sql.
+/// sql/024_process_template_v7.sql and sql/018_production_step_template_v4.sql.
 ///
 /// Contract §3 is explicit that the server is the source of truth here — the app hiding
 /// a button is a UX convenience — so a gap in this file is a gap in the only control
@@ -20,7 +20,7 @@ public class RoleGatingTests
     private const string Store = "store_manager";
     private const string Company = "company_manager";
 
-    // ---------- Process template v6 ----------
+    // ---------- Process template v7 ----------
 
     private const string ProcessJson = """
     {
@@ -39,7 +39,7 @@ public class RoleGatingTests
         { "code": "DELIVERED", "name": "Delivered" }
       ],
       "transitions": [
-        { "from": "NEW", "to": "IN_PRODUCTION", "allowedRoles": ["salesperson", "company_manager"] },
+        { "from": "NEW", "to": "IN_PRODUCTION", "allowedRoles": ["factory_supervisor"] },
         { "from": "IN_PRODUCTION", "to": "READY_TO_INVOICE", "orderTypes": ["customer"],
           "requiresAllLineItemsComplete": true, "notifyEvent": "invoice_ready",
           "allowedRoles": ["factory_supervisor"] },
@@ -118,8 +118,7 @@ public class RoleGatingTests
     public static TheoryData<string, string, string, string, string[]> OrderTransitions() => new()
     {
         // from, to, orderType, permittedRole, deniedRoles
-        { "NEW", "IN_PRODUCTION", "stock", Sales, [Factory, Store] },
-        { "NEW", "IN_PRODUCTION", "stock", Company, [Factory, Store] },
+        { "NEW", "IN_PRODUCTION", "stock", Factory, [Sales, Store, Company] },
         { "IN_PRODUCTION", "READY_TO_INVOICE", "customer", Factory, [Sales, Store, Company] },
         { "READY_TO_INVOICE", "READY_TO_DELIVER", "customer", Store, [Sales, Factory] },
         { "READY_TO_INVOICE", "READY_TO_DELIVER", "customer", Company, [Sales, Factory] },
@@ -382,8 +381,10 @@ public class OutsourcingRequestsAccessTests
 /// <summary>
 /// POST /api/orders had no role check at all until the endpoint-access sweep (CLAUDE.md
 /// §2) found it. Contract §3's visibility table lists "order creation" only under
-/// salesperson; the closest action-table row (NEW -> IN_PRODUCTION) adds company_manager.
-/// Neither factory_supervisor nor store_manager is ever named as able to raise an order.
+/// salesperson, plus company_manager per its own umbrella. Neither factory_supervisor
+/// nor store_manager is ever named as able to raise an order — a separate question from
+/// who owns NEW -> IN_PRODUCTION (factory_supervisor, process template v7), which this
+/// endpoint never touches.
 /// </summary>
 public class CreateOrderAccessTests
 {

@@ -355,8 +355,8 @@ Valid roles — **assign deliberately, because actions are gated on them**:
 
 | Role | Can do |
 |---|---|
-| `salesperson` | Raise orders (`NEW → IN_PRODUCTION`); sees only their own orders |
-| `factory_supervisor` | All production steps, moving orders out of production, dispatch to transit; sees all orders but only raw-material requests they raised |
+| `salesperson` | Raise orders (start at `NEW`); sees only their own orders |
+| `factory_supervisor` | All production steps, `NEW → IN_PRODUCTION` (fires automatically on first production plan, not a direct call), moving orders out of production, dispatch to transit; sees all orders but only raw-material requests they raised |
 | `store_manager` | Invoicing handoff, all store-side movements, raw-material procurement; sees all orders |
 | `company_manager` | Everything `store_manager` does, plus outsourcing/import |
 

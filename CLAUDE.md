@@ -44,6 +44,24 @@ outsourcing/import).
 - Do not touch the mobile repository. If a change here requires a change to
   `API-INTERFACE-CONTRACT.md`, flag it and wait for confirmation before
   changing the contract — the mobile team builds against it independently.
+- **When a new endpoint returns a shape derived from an entity the contract
+  already documents, diff the two field lists mechanically before publishing.**
+  Run `python scripts/diff-response-shape.py <heading-a> <heading-b>`, then
+  state the delta in the contract as a closed list — what is omitted, what is
+  added, and "everything else is identical".
+
+  A JSON example reads as complete whether or not it is, so eyeballing one
+  against another reliably misses fields. `GET /api/order-line-items` shipped
+  with `originatingOrderId`/`originatingOrderNumber` silently dropped: not a
+  deliberate trim, just an omission nobody could see. It mattered precisely
+  there — a claimed semi-finished item appears in that queue, and it was the
+  only screen connecting the order that *made* an item to the one delivering
+  it. The diff surfaced it in one command; three careful readings had not.
+
+  This is the same failure as the earlier `stepId` gap: both halves
+  individually correct, the relationship between them never written down. It
+  is silent by construction, so nothing will prompt you — which is why it is a
+  standing step and not a judgment call.
 - Prefer the simplest implementation that satisfies the spec. This is a
   pilot for a small internal user group — do not add infrastructure
   (message queues, orchestration engines, gateways) the current scope

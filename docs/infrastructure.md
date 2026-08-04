@@ -175,6 +175,29 @@ client secret to leak — but they're scoped to exactly one resource group via
 the role assignment above. CI build-and-deploy confirmed green as of this
 update.
 
+### Confirming a deploy actually landed
+
+There is no `gh` CLI on the current dev machine, so the Actions run cannot be watched
+directly. Confirm from the outside instead: **poll the deployed app for something only
+the new build can produce** — a newly added response field, not merely a `200`. A
+successful call proves the app is up, not that it is the build you just pushed.
+
+Deploys take roughly two minutes (observed: four polls at 30s intervals). Log in as
+`devadmin` (see *Dev/test data*) for a JWT.
+
+Two traps, both of which have cost time:
+
+- **The SQL database is serverless with a 60-minute auto-pause, and the first
+  connection after idle _fails_ rather than blocks** — `sqlcmd` returns "Database
+  ... is not currently available", which reads like an outage. It is not. Retry in a
+  loop; it typically succeeds on the second attempt. Wake the database before running
+  migrations, not during.
+- **An empty response can be a correct response.** The dev database is often empty, so
+  a query returning `[]` proves nothing about whether the query works. Before
+  concluding an endpoint is verified, create temporary data, assert against it, then
+  delete it — and check the row counts return to zero afterwards. A verification that
+  cannot fail is not a verification.
+
 ## ⚠ SOHO integration is a stub, not a finished integration
 
 The client has not provided their SOHO API yet. `SOHO_MODE=stub` is currently set on

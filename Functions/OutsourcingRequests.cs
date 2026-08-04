@@ -70,7 +70,10 @@ public class OutsourcingRequests(
 
         using var connection = connectionFactory.CreateConnection();
 
-        var rows = await connection.QueryAsync(
+        // Two queries, not a join fanned out per line item: the request-level columns
+        // (supplier, notes, timestamps) would otherwise repeat once per linked item and
+        // need de-duplicating. Same shape as OrderReader.GetDetailAsync's multi-query.
+        using var multi = await connection.QueryMultipleAsync(
             @"SELECT r.id, r.method, r.status, r.items, r.notes, r.created_at, r.updated_at,
                      s.id AS supplier_id, s.name AS supplier_name,
                      u.id AS requested_by_id, u.first_name, u.last_name,
@@ -80,8 +83,33 @@ public class OutsourcingRequests(
               JOIN users u ON u.id = r.requested_by
               WHERE (@Status IS NULL OR r.status = @Status)
                 AND (@Method IS NULL OR r.method = @Method)
-              ORDER BY r.created_at DESC",
+              ORDER BY r.created_at DESC;
+
+              SELECT l.request_id, li.id AS line_item_id, li.item_name,
+                     li.order_id, o.order_number
+              FROM outsourcing_request_line_items l
+              JOIN order_line_items li ON li.id = l.line_item_id
+              JOIN orders o ON o.id = li.order_id
+              JOIN outsourcing_requests r ON r.id = l.request_id
+              WHERE (@Status IS NULL OR r.status = @Status)
+                AND (@Method IS NULL OR r.method = @Method)
+              ORDER BY li.created_at;",
             new { Status = status is null ? null : OutsourcingStatusFlow.Canonical(status), Method = method });
+
+        var rows = (await multi.ReadAsync()).ToList();
+        var lineItemRows = (await multi.ReadAsync()).ToList();
+
+        // Grouped here rather than joined in SQL so a request's own columns (supplier,
+        // notes, timestamps) appear once regardless of how many items it links.
+        var lineItemsByRequest = lineItemRows
+            .GroupBy(li => (Guid)li.request_id)
+            .ToDictionary(g => g.Key, g => g.Select(li => new
+            {
+                lineItemId = (Guid)li.line_item_id,
+                itemName = (string)li.item_name,
+                orderId = (Guid)li.order_id,
+                orderNumber = (string)li.order_number,
+            }).ToList());
 
         var requests = rows.Select(r => new
         {
@@ -96,6 +124,11 @@ public class OutsourcingRequests(
                 : new { supplierId = (Guid)r.supplier_id, name = (string)r.supplier_name },
             items = ParseJson((string?)r.items),
             lineItemCount = (int)r.line_item_count,
+            // Per-item identity (contract §6): mobile's destination-store routing after
+            // receiving a request needs each item's orderId, and lineItemCount alone
+            // cannot provide it. Kept alongside lineItemCount rather than replacing it —
+            // the count is enough for a badge; this is for anything that needs detail.
+            lineItems = lineItemsByRequest.GetValueOrDefault((Guid)r.id) ?? [],
             notes = (string?)r.notes,
             requestedBy = new { userId = (Guid)r.requested_by_id, name = $"{r.first_name} {r.last_name}" },
             createdAt = TimeFormat.Utc((DateTime)r.created_at),

@@ -918,6 +918,9 @@ Response `200`:
       "supplier": { "supplierId": "guid", "name": "string" },
       "items": [ { } ],
       "lineItemCount": 2,
+      "lineItems": [
+        { "lineItemId": "guid", "itemName": "string", "orderId": "guid", "orderNumber": "CUS-2026-0001" }
+      ],
       "notes": "string|null",
       "requestedBy": { "userId": "guid", "name": "string" },
       "createdAt": "2026-08-02T11:20:00.0000000Z",
@@ -929,8 +932,16 @@ Response `200`:
 ```
 `supplier` is `null` until a supplier is set. `nextStatuses` is method-aware, same as the
 other outsourcing responses (§6) — an `import` request never advertises
-`received_semi_finished`. `lineItemCount` is the count of linked line items, not their
-detail; fetch the order/line item for that.
+`received_semi_finished`.
+
+`lineItemCount` and `lineItems` carry the same items at different granularity — `count`
+is enough for a badge, `lineItems` is for anything that needs to render or route by
+item. Each entry names the **order the item currently belongs to** (`orderId`,
+`orderNumber` — same meaning as `orderId` on a raw-material request's `lineItem`, §6),
+which is what a receive flow needs to call
+`POST /api/orders/{orderId}/destination-store` per item without a follow-up fetch.
+`lineItems` is always an array, `[]` when a request somehow links none — never `null`,
+so a caller can `.map`/`.forEach` it unconditionally.
 
 ### POST /api/outsourcing-requests
 ```json

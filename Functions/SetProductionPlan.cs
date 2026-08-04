@@ -47,13 +47,22 @@ public class SetProductionPlan(
                 $"method must be one of: {string.Join(", ", ValidMethods)}");
         }
 
-        if (body.Steps is null || body.Steps.Count == 0)
+        var requestedMethod = body.Method.ToLowerInvariant();
+        var requestedSteps = body.Steps ?? [];
+
+        // Only a factory item performs in-house steps. An outsource/import item's work
+        // happens entirely at the supplier, so an empty (or omitted) steps array is the
+        // correct, expected input for those methods — not an omission to reject. This
+        // used to require >=1 step for every method, which meant the normal outsource/
+        // import case (no factory steps at all) hit a validation error it never should
+        // have reached.
+        if (requestedMethod == "factory" && requestedSteps.Count == 0)
         {
             throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
-                "At least one production step is required");
+                "At least one production step is required for method 'factory'");
         }
 
-        if (body.Steps.Count != body.Steps.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+        if (requestedSteps.Count != requestedSteps.Distinct(StringComparer.OrdinalIgnoreCase).Count())
         {
             throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",
                 "Production steps must not repeat");
@@ -69,7 +78,7 @@ public class SetProductionPlan(
             .ToDictionary(s => s.Code, s => s.Code, StringComparer.OrdinalIgnoreCase);
 
         var canonicalSteps = new List<string>();
-        foreach (var step in body.Steps)
+        foreach (var step in requestedSteps)
         {
             if (!selectable.TryGetValue(step, out var canonical))
             {
@@ -108,7 +117,6 @@ public class SetProductionPlan(
             throw new AppException(StatusCodes.Status409Conflict, "PLAN_LOCKED", change.Message!);
         }
 
-        var requestedMethod = body.Method.ToLowerInvariant();
         if (!ProductionPlanChange.CanChangeMethod(existing) &&
             !string.Equals(item.Method, requestedMethod, StringComparison.OrdinalIgnoreCase))
         {
@@ -155,7 +163,7 @@ public class SetProductionPlan(
         return new OkObjectResult(new
         {
             lineItemId = id,
-            method = body.Method.ToLowerInvariant(),
+            method = requestedMethod,
             steps = steps.Select(s => new
             {
                 stepId = (Guid)s.id,

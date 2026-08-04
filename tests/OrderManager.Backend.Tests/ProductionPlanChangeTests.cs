@@ -69,6 +69,19 @@ public class ProductionPlanChangeTests
     }
 
     [Fact]
+    public void AllowsAnEmptyPlanWhenNothingExists()
+    {
+        // The outsource/import case SetProductionPlan now permits: those methods' work
+        // happens entirely at the supplier, so a fresh item with no factory steps and no
+        // existing work to protect must clear cleanly, not just fail safely.
+        var decision = ProductionPlanChange.Evaluate([], []);
+
+        Assert.True(decision.IsAllowed);
+        Assert.Empty(decision.StepsToAdd);
+        Assert.Empty(decision.StepsToRemove);
+    }
+
+    [Fact]
     public void AllowsAnUnchangedPlan()
     {
         var decision = ProductionPlanChange.Evaluate(

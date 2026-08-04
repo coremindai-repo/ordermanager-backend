@@ -598,6 +598,15 @@ Sets the chosen path and step list for one item.
 Step names come from `GET /api/production-steps-template` and are matched
 case-insensitively; the response echoes the template's own casing.
 
+**`steps` must be non-empty only for `method: "factory"`.** An outsource or import
+item's work happens entirely at the supplier — no in-house step exists to plan — so
+`steps` should be omitted or `[]` for those methods, and that is a normal `200`, not an
+error. `400 VALIDATION_ERROR` ("At least one production step is required for method
+'factory'") applies to `factory` alone. This does **not** mean outsource/import can
+never carry steps: a claimed semi-finished item re-enters this same endpoint later,
+still under method `outsource`, to plan its remaining factory steps (§6) — the rule is
+"factory requires ≥1", never "non-factory forbids any".
+
 **Response `200` — this is where step IDs are created and first returned:**
 ```json
 {

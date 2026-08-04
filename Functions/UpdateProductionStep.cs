@@ -39,6 +39,12 @@ public class UpdateProductionStep(
     {
         var caller = AuthHelper.RequireCaller(req, jwtService);
 
+        // Matches the SAS-issuing endpoint's gate (GetPhotoUploadUrl) and CLAUDE.md §5's
+        // role table: production step transitions are factory_supervisor-only. This
+        // endpoint is what actually writes the step status and photos, so it needs the
+        // same gate, not just the SAS step ahead of it.
+        AuthHelper.RequireRole(caller, "factory_supervisor");
+
         if (!Guid.TryParse(lineItemId, out var itemId) || !Guid.TryParse(stepId, out var parsedStepId))
         {
             throw new AppException(StatusCodes.Status400BadRequest, "VALIDATION_ERROR",

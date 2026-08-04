@@ -11,6 +11,9 @@ namespace OrderManager.Backend.Functions;
 /// <summary>
 /// POST /api/order-line-items/{lineItemId}/production-plan (contract §5) —
 /// sets the item's method and the ordered list of steps it requires.
+///
+/// factory_supervisor only: they are the one choosing method and steps on the design
+/// screens, same as every other production-side decision in CLAUDE.md §5's role table.
 /// </summary>
 public class SetProductionPlan(
     ISqlConnectionFactory connectionFactory,
@@ -29,6 +32,7 @@ public class SetProductionPlan(
         string lineItemId)
     {
         var caller = AuthHelper.RequireCaller(req, jwtService);
+        AuthHelper.RequireRole(caller, "factory_supervisor");
 
         if (!Guid.TryParse(lineItemId, out var id))
         {

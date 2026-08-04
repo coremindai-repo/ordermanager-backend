@@ -18,7 +18,7 @@ namespace OrderManager.Backend.Functions;
 /// template change is reflected without a code change — including statuses with zero
 /// orders, which a GROUP BY alone would omit and leave the tab missing from the UI.
 ///
-/// NOTE: not yet in API-INTERFACE-CONTRACT.md — pending approval to add it.
+/// Documented in API-INTERFACE-CONTRACT.md §10 (GET /api/dashboard).
 /// </summary>
 public class GetDashboard(
     ISqlConnectionFactory connectionFactory,

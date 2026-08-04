@@ -14,10 +14,13 @@ namespace OrderManager.Backend.Functions;
 /// that is where the data model puts it (`orders.store_id`, CLAUDE.md §4); line items
 /// carry no store of their own.
 ///
-/// NOTE: not yet in API-INTERFACE-CONTRACT.md, and the Factory Supervisor wireframes
-/// were not available when this was written — the endpoint shape is inferred from the
-/// data model. Pending approval, and worth checking against the mobile spec in case
-/// routing is meant to be per line item rather than per order.
+/// Documented in API-INTERFACE-CONTRACT.md §8 (POST /api/orders/{orderId}/destination-store)
+/// — confirmed order-level, not per line item: "an order's line items ship together."
+///
+/// factory_supervisor only: this sets the prerequisite for the `-> IN_TRANSIT` dispatch
+/// transition, which the process template already gates to factory_supervisor (CLAUDE.md
+/// §5) — the same role decides where dispatched goods go as performs the factory-floor
+/// movements around it.
 /// </summary>
 public class SetDestinationStore(ISqlConnectionFactory connectionFactory, JwtService jwtService)
 {
@@ -28,7 +31,8 @@ public class SetDestinationStore(ISqlConnectionFactory connectionFactory, JwtSer
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "orders/{orderId}/destination-store")] HttpRequest req,
         string orderId)
     {
-        AuthHelper.RequireCaller(req, jwtService);
+        var caller = AuthHelper.RequireCaller(req, jwtService);
+        AuthHelper.RequireRole(caller, "factory_supervisor");
 
         if (!Guid.TryParse(orderId, out var id))
         {

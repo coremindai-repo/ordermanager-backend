@@ -332,3 +332,121 @@ public class RequireRoleTests
         Assert.Contains("company_manager", exception.Message);
     }
 }
+
+/// <summary>
+/// Outsourcing/import is company_manager territory per contract §3, with no per-record
+/// nuance like raw materials' item-linked-vs-standalone split — so List, Create and
+/// UpdateStatus all gate on the same single role via <see cref="AuthHelper.RequireRole"/>.
+///
+/// List had no gate at all until this was caught: any authenticated user — a salesperson
+/// included — could enumerate every outsourcing/import request, supplier names and notes
+/// included. This closes that the same way <see cref="RoleGatingTests"/> closes ungated
+/// template transitions: enumerate every denied role explicitly rather than trusting a
+/// single "it 403s" case.
+/// </summary>
+public class OutsourcingRequestsAccessTests
+{
+    private static Caller With(params string[] roles) => new(Guid.NewGuid(), roles);
+
+    public static TheoryData<string> DeniedRoles() => new()
+    {
+        "salesperson",
+        "store_manager",
+        "factory_supervisor",
+    };
+
+    [Theory]
+    [MemberData(nameof(DeniedRoles))]
+    public void NonCompanyManagerRolesAreForbidden(string role)
+    {
+        var exception = Assert.Throws<AppException>(() =>
+            AuthHelper.RequireRole(With(role), "company_manager"));
+
+        Assert.Equal(403, exception.StatusCode);
+        Assert.Equal("FORBIDDEN", exception.Code);
+    }
+
+    [Fact]
+    public void CompanyManagerIsPermitted()
+    {
+        AuthHelper.RequireRole(With("company_manager"), "company_manager");
+    }
+
+    [Fact]
+    public void AUserHoldingCompanyManagerAlongsideAnotherRoleIsStillPermitted()
+    {
+        AuthHelper.RequireRole(With("store_manager", "company_manager"), "company_manager");
+    }
+}
+
+/// <summary>
+/// POST /api/orders had no role check at all until the endpoint-access sweep (CLAUDE.md
+/// §2) found it. Contract §3's visibility table lists "order creation" only under
+/// salesperson; the closest action-table row (NEW -> IN_PRODUCTION) adds company_manager.
+/// Neither factory_supervisor nor store_manager is ever named as able to raise an order.
+/// </summary>
+public class CreateOrderAccessTests
+{
+    private static Caller With(params string[] roles) => new(Guid.NewGuid(), roles);
+
+    public static TheoryData<string> PermittedRoles() => new() { "salesperson", "company_manager" };
+
+    public static TheoryData<string> DeniedRoles() => new() { "factory_supervisor", "store_manager" };
+
+    [Theory]
+    [MemberData(nameof(PermittedRoles))]
+    public void SalespersonAndCompanyManagerMayCreateOrders(string role)
+    {
+        AuthHelper.RequireRole(With(role), "salesperson", "company_manager");
+    }
+
+    [Theory]
+    [MemberData(nameof(DeniedRoles))]
+    public void OtherRolesAreForbiddenFromCreatingOrders(string role)
+    {
+        var exception = Assert.Throws<AppException>(() =>
+            AuthHelper.RequireRole(With(role), "salesperson", "company_manager"));
+
+        Assert.Equal(403, exception.StatusCode);
+        Assert.Equal("FORBIDDEN", exception.Code);
+    }
+}
+
+/// <summary>
+/// Three production-side actions the sweep found with no role check at all: production
+/// step updates (UpdateProductionStep), destination routing (SetDestinationStore), and
+/// production plans (SetProductionPlan). Grouped in one class because it is the same
+/// rule enforced three times, not three different rules — CLAUDE.md §5's role table
+/// gives all production-side decisions to factory_supervisor, and the SAS-issuing
+/// sibling of the step-update endpoint (GetPhotoUploadUrl) already had this exact gate,
+/// which is what made the step-update endpoint's gap visible as a gap rather than a
+/// design choice.
+/// </summary>
+public class FactorySupervisorOnlyProductionActionsTests
+{
+    private static Caller With(params string[] roles) => new(Guid.NewGuid(), roles);
+
+    public static TheoryData<string> DeniedRoles() => new()
+    {
+        "salesperson",
+        "store_manager",
+        "company_manager",
+    };
+
+    [Theory]
+    [MemberData(nameof(DeniedRoles))]
+    public void NonFactorySupervisorRolesAreForbidden(string role)
+    {
+        var exception = Assert.Throws<AppException>(() =>
+            AuthHelper.RequireRole(With(role), "factory_supervisor"));
+
+        Assert.Equal(403, exception.StatusCode);
+        Assert.Equal("FORBIDDEN", exception.Code);
+    }
+
+    [Fact]
+    public void FactorySupervisorIsPermitted()
+    {
+        AuthHelper.RequireRole(With("factory_supervisor"), "factory_supervisor");
+    }
+}

@@ -10,7 +10,7 @@ namespace OrderManager.Backend.Functions;
 /// GET /api/suppliers — the predefined picker the outsourcing/import screens use.
 /// Optional `method` filter (outsource|import) since not every supplier serves both.
 ///
-/// NOTE: not yet in API-INTERFACE-CONTRACT.md — pending approval to add it.
+/// Documented in API-INTERFACE-CONTRACT.md §6 (GET /api/suppliers).
 /// </summary>
 public class GetSuppliers(ISqlConnectionFactory connectionFactory, JwtService jwtService)
 {

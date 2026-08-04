@@ -14,7 +14,7 @@ namespace OrderManager.Backend.Functions;
 /// straight to Blob storage, then sends the returned blobPath back on the step update
 /// call, where the upload is validated.
 ///
-/// NOTE: not yet in API-INTERFACE-CONTRACT.md — pending approval to add it.
+/// Documented in API-INTERFACE-CONTRACT.md §5.
 /// </summary>
 public class GetPhotoUploadUrl(
     ISqlConnectionFactory connectionFactory,

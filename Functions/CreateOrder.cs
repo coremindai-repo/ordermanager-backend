@@ -61,6 +61,12 @@ public class CreateOrder(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "orders")] HttpRequest req)
     {
         var caller = AuthHelper.RequireCaller(req, jwtService);
+
+        // Contract §3: order creation belongs to salesperson, plus company_manager per
+        // the action table's closest row (NEW -> IN_PRODUCTION). factory_supervisor and
+        // store_manager are never listed as raising orders.
+        AuthHelper.RequireRole(caller, "salesperson", "company_manager");
+
         var request = await ReadAndValidateAsync(req);
 
         var processTemplate = await templateProvider.GetActiveAsync(TemplateKind.Process);

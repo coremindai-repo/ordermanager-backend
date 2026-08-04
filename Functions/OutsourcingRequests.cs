@@ -46,7 +46,13 @@ public class OutsourcingRequests(
     public async Task<IActionResult> List(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "outsourcing-requests")] HttpRequest req)
     {
-        AuthHelper.RequireCaller(req, jwtService);
+        var caller = AuthHelper.RequireCaller(req, jwtService);
+
+        // Contract §3: outsourcing/import is company_manager territory — no per-record
+        // nuance like raw materials (item-linked vs. standalone), so a flat role gate is
+        // the whole rule, matching Create/UpdateStatus below rather than a dedicated
+        // AccessScope method for a distinction the contract doesn't draw.
+        AuthHelper.RequireRole(caller, "company_manager");
 
         var status = req.Query["status"].FirstOrDefault();
         if (status is not null && !OutsourcingStatusFlow.IsKnown(status))

@@ -62,6 +62,36 @@ outsourcing/import).
   individually correct, the relationship between them never written down. It
   is silent by construction, so nothing will prompt you — which is why it is a
   standing step and not a judgment call.
+
+  **Run this sweep whenever a new endpoint ships, not just when something
+  feels off** — every instance so far was found by accident, not by looking.
+- **When a new endpoint ships, grep every `Functions/*.cs` for `RequireCaller`
+  and check what follows it against contract §3's role table** — either a
+  `RequireRole` call, an `AccessScope` check, or a documented reason the
+  endpoint is intentionally open (reference data, a caller's own records).
+  `RequireCaller` only proves the caller is *authenticated*; it proves nothing
+  about whether they're *permitted*, and the two are easy to conflate at a
+  glance since both throw from the top of the function.
+
+  Found by accident, not by looking, twice over: `OutsourcingRequests.List`
+  had no gate at all — any authenticated user, salesperson included, could
+  list every supplier name and contact in the system — despite §3 giving
+  outsourcing/import screens to company_manager alone, and despite the
+  sibling `Create`/`UpdateStatus` endpoints on the same class enforcing it
+  correctly. A full sweep triggered by that one catch then found three more:
+  `GetOrderById` returned full order detail (billing/shipping included) to
+  any authenticated caller with no `AccessScope.CanAccessOrder` check, even
+  though `GetOrders`/`ListLineItems`/`GetDashboard` all correctly scope the
+  same data when listing it. `UpdateProductionStep` — the endpoint that
+  actually writes a step's status and photos — had no role check at all,
+  while its own SAS-issuing sibling (`GetPhotoUploadUrl`) already required
+  `factory_supervisor`. `CreateOrder` had no role check despite §3 naming
+  salesperson (plus company_manager) as the only roles that raise orders.
+
+  **Run this sweep whenever a new endpoint ships, not just when something
+  feels off.** A missing gate produces no error, no failed test, and no
+  crash — the endpoint just works for everyone, which is indistinguishable
+  from working correctly until someone reads the diff against §3.
 - Prefer the simplest implementation that satisfies the spec. This is a
   pilot for a small internal user group — do not add infrastructure
   (message queues, orchestration engines, gateways) the current scope

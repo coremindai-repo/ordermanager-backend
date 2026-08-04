@@ -898,7 +898,39 @@ The predefined picker for outsourcing/import. Optional `method` filter
 ```
 
 ### GET /api/outsourcing-requests
-Query params: `status`, `method`.
+Query params: `status` (any of the five below), `method` (`outsource`|`import`).
+
+**`company_manager` only — `403` for every other role.** Unlike raw materials, there is
+no per-record nuance here (no item-linked-vs-standalone split): contract §3 gives
+outsourcing/import screens to company_manager alone, so visibility is the same flat role
+check as `POST /api/outsourcing-requests` and its `/status` endpoint, not a query-level
+filter.
+
+Response `200`:
+```json
+{
+  "requests": [
+    {
+      "requestId": "guid",
+      "method": "outsource",
+      "status": "placed",
+      "nextStatuses": ["received_finished", "received_semi_finished"],
+      "supplier": { "supplierId": "guid", "name": "string" },
+      "items": [ { } ],
+      "lineItemCount": 2,
+      "notes": "string|null",
+      "requestedBy": { "userId": "guid", "name": "string" },
+      "createdAt": "2026-08-02T11:20:00.0000000Z",
+      "updatedAt": "2026-08-02T11:21:00.0000000Z"
+    }
+  ],
+  "count": 1
+}
+```
+`supplier` is `null` until a supplier is set. `nextStatuses` is method-aware, same as the
+other outsourcing responses (§6) — an `import` request never advertises
+`received_semi_finished`. `lineItemCount` is the count of linked line items, not their
+detail; fetch the order/line item for that.
 
 ### POST /api/outsourcing-requests
 ```json

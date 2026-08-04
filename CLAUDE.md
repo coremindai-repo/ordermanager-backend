@@ -260,6 +260,19 @@ the old rules while newly-started instances serve the new ones — the same
 request can then be validated differently depending on which instance
 handles it. Always pair a template edit with a redeploy.
 
+**Writing and committing a `sql/0NN_..._vN.sql` file is not the same as
+running it.** This bit during the v7 rollout: the code (`SetProductionPlan.cs`
+validating against a role the template didn't grant yet) and the migration
+file were both committed and deployed, but the SQL itself was never executed
+against the live database — nothing in CI runs pending migrations. The
+symptom was silent and easy to misread as a deploy-propagation delay: the
+`AdvanceOrderIfStillNewAsync`-style best-effort transition just logged a
+warning and skipped, so every call still returned `200` while the order
+quietly stayed on the old template's rules. Confirm the *database* row
+changed (`SELECT version, active FROM process_templates`) before concluding
+new template-dependent code isn't working — a deploy makes the code correct;
+it does not make the SQL have run.
+
 ### Role gating — enforced
 
 Every transition is gated. Process template v7 and production step template v4 set

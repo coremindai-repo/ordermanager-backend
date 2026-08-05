@@ -390,11 +390,50 @@ not ad hoc):
 
 | Username | Password | Role |
 |---|---|---|
-| `devadmin` | `Test@Pilot2026!` | `company_manager` (broadest access, for exercising role-gated endpoints) |
+| `devadmin` | ⚠ **rotated 2026-08-04, not written here by request** — ask whoever ran the reset | `company_manager` (broadest access, for exercising role-gated endpoints) |
 
 Dev/test use only — rotate or remove before onboarding real client users.
 An earlier ad hoc `devadmin` insert from initial Epic 1 smoke-testing was
-deleted; this one replaces it via the seed script above.
+deleted; this one replaces it via the seed script above. The password shown
+in `sql/003_seed_test_user.sql`'s comment (`Test@Pilot2026!`) is the
+**original seeded value only** — it was rotated directly against the live
+database on 2026-08-04 at the user's request, specifically to avoid the new
+password ever landing in a file. The seed file's hash was **not** updated to
+match, so re-running that script would reset the live account back to the
+old password — do not re-run it without accounting for that.
+
+### Role-exercise accounts (live only, not seeded — no SQL file)
+
+Four more accounts were created directly against the live database on
+2026-08-04, one per role, to let each role be exercised/tested without
+juggling `devadmin`'s single `company_manager` identity. All four share one
+password, which — like the `devadmin` reset above — was deliberately never
+written to a file; ask whoever created them.
+
+| Username | Role |
+|---|---|
+| `devsales` | `salesperson` |
+| `devsuper` | `factory_supervisor` |
+| `devstore` | `store_manager` |
+| `devmgr` | `company_manager` |
+
+**Not reproducible from a fresh database** — unlike `devadmin`, there is no
+`sql/0NN_...` file backing these; they exist only as live rows. If the
+database is ever rebuilt from migrations alone, these four will not come
+back. Worth writing a seed script for them if they turn out to be
+long-lived rather than one-session conveniences.
+
+**`devsales` in particular has been used for manual QA beyond automated
+verification** — e.g. real-looking orders ("Cot", "Table", "Chair", "Diwan")
+created after `sql/025_order_is_test_data_flag.sql`'s one-time backfill ran,
+so those specific orders are **not** tagged `is_test_data` and remain
+visible in normal listings. That migration was a backfill, not an ongoing
+trigger — nothing currently re-tags new orders from these accounts
+automatically. If `devsales`/`devadmin` continue to be used for manual QA
+going forward, either re-run a similar `UPDATE ... WHERE created_by = ...`
+periodically, or revisit whether tagging should happen automatically at
+order-creation time for these specific accounts (a design decision, not
+implemented — raise it before building it).
 
 ## Known gaps / follow-ups
 
